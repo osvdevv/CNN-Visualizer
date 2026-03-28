@@ -1,5 +1,7 @@
 # Task Plan - `feature/canvas-model-baseline`
 
+## Assigned to: @deepdevjose
+
 ## Branch Goal
 
 Deliver Phase 1 of CNN Visualizer as a functional baseline:
@@ -192,3 +194,4 @@ feat(canvas-model-baseline): implement draw, preprocess, mnist inference, and pr
   - review `tf.tidy` scopes and retained tensors.
 - Canvas looks correct but grid looks wrong:
   - review final normalization and downsampling.
+
