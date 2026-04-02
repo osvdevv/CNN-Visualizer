@@ -1,0 +1,15 @@
+{
+  "name": "cnn-visualizer-training",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Training workspace for CNN Visualizer models",
+  "main": "train-cnn.js",
+  "scripts": {
+    "train:cnn": "node train-cnn.js",
+    "train:baseline": "node train-baseline.js"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
+    "mnist": "^1.1.0"
+  }
+}
