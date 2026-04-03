@@ -2,6 +2,25 @@
 
 This folder is isolated from the frontend runtime and is used only for model training experiments.
 
+## Recommended Path: Python
+
+The fastest path for this repo is now the Python workspace in [python/README.md](python/README.md).
+
+Why:
+
+- TensorFlow/Keras in Python is faster than the pure JS backend used by the Node scripts here.
+- The Python flow still exports a browser-ready TensorFlow.js model into `../public/model`.
+
+Quick start:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+cd training/python
+uv python install 3.12
+uv sync --python 3.12
+uv run --python 3.12 train_cnn.py --train-size 4000 --test-size 800 --epochs 1
+```
+
 ## Setup
 
 ```bash
@@ -10,6 +29,8 @@ npm install
 ```
 
 This setup uses `@tensorflow/tfjs` (pure JS backend) so it works with modern Node versions on Windows without native build tools.
+
+The JS scripts are still useful as a fallback, but they are slower than the Python path above.
 
 ## Run Baseline (Flatten + Dense)
 
@@ -36,6 +57,15 @@ $env:MNIST_TRAIN_SIZE=4000; $env:MNIST_TEST_SIZE=800; $env:EPOCHS=1; npm run tra
 ```
 
 The CNN script saves a TensorFlow.js model to `../public/model`.
+
+## Export A Python-Trained Model Manually
+
+If you already have `training/python/artifacts/cnn-weights.json`, you can regenerate the browser model without retraining:
+
+```bash
+cd training
+npm run export:python-model
+```
 
 ## Notes
 

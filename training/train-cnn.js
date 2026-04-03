@@ -1,7 +1,7 @@
 const tf = require('@tensorflow/tfjs');
 const mnist = require('mnist');
-const fs = require('node:fs');
-const path = require('node:path');
+const { createCnnModel } = require('./model-factory');
+const { saveModelArtifacts } = require('./tfjs-export');
 
 const TRAIN_SIZE = Number(process.env.MNIST_TRAIN_SIZE ?? 60000);
 const TEST_SIZE = Number(process.env.MNIST_TEST_SIZE ?? 10000);
@@ -30,55 +30,6 @@ function metric(logs, modernKey, legacyKey) {
 
   return NaN;
 }
-
-async function saveModelArtifacts(model) {
-  const targetDir = path.resolve(__dirname, '..', 'public', 'model');
-  fs.mkdirSync(targetDir, { recursive: true });
-
-  let capturedArtifacts = null;
-  await model.save(
-    tf.io.withSaveHandler(async (artifacts) => {
-      capturedArtifacts = artifacts;
-      return {
-        modelArtifactsInfo: {
-          dateSaved: new Date(),
-          modelTopologyType: 'JSON',
-          modelTopologyBytes: JSON.stringify(artifacts.modelTopology).length,
-          weightSpecsBytes: JSON.stringify(artifacts.weightSpecs).length,
-          weightDataBytes: artifacts.weightData.byteLength,
-        },
-      };
-    }),
-  );
-
-  if (!capturedArtifacts) {
-    throw new Error('No se capturaron artefactos del modelo para exportacion.');
-  }
-
-  const modelJson = {
-    modelTopology: capturedArtifacts.modelTopology,
-    weightsManifest: [
-      {
-        paths: ['group1-shard1of1.bin'],
-        weights: capturedArtifacts.weightSpecs,
-      },
-    ],
-    format: 'layers-model',
-    generatedBy: `TensorFlow.js tfjs-layers v${tf.version.tfjs}`,
-    convertedBy: null,
-  };
-
-  fs.writeFileSync(
-    path.join(targetDir, 'model.json'),
-    `${JSON.stringify(modelJson, null, 2)}\n`,
-    'utf8',
-  );
-  fs.writeFileSync(
-    path.join(targetDir, 'group1-shard1of1.bin'),
-    Buffer.from(capturedArtifacts.weightData),
-  );
-}
-
 async function main() {
   console.log(`Cargando MNIST (${TRAIN_SIZE} train, ${TEST_SIZE} test)...`);
   const set = mnist.set(TRAIN_SIZE, TEST_SIZE);
@@ -88,32 +39,7 @@ async function main() {
   const train = toTensor(trainData);
   const test = toTensor(testData);
 
-  const model = tf.sequential();
-  model.add(
-    tf.layers.conv2d({
-      inputShape: [28, 28, 1],
-      filters: 32,
-      kernelSize: 3,
-      activation: 'relu',
-      padding: 'same',
-    }),
-  );
-  model.add(tf.layers.maxPooling2d({ poolSize: 2, strides: 2 }));
-
-  model.add(
-    tf.layers.conv2d({
-      filters: 64,
-      kernelSize: 3,
-      activation: 'relu',
-      padding: 'same',
-    }),
-  );
-  model.add(tf.layers.maxPooling2d({ poolSize: 2, strides: 2 }));
-
-  model.add(tf.layers.flatten());
-  model.add(tf.layers.dense({ units: 128, activation: 'relu' }));
-  model.add(tf.layers.dropout({ rate: 0.5 }));
-  model.add(tf.layers.dense({ units: 10, activation: 'softmax' }));
+  const model = createCnnModel(tf);
 
   model.compile({
     optimizer: tf.train.adam(1e-3),

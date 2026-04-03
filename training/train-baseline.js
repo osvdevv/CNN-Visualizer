@@ -1,5 +1,6 @@
 const tf = require('@tensorflow/tfjs');
 const mnist = require('mnist');
+const { createBaselineModel } = require('./model-factory');
 
 const TRAIN_SIZE = Number(process.env.MNIST_TRAIN_SIZE ?? 10000);
 const TEST_SIZE = Number(process.env.MNIST_TEST_SIZE ?? 2000);
@@ -38,9 +39,7 @@ async function main() {
   const train = toTensor(trainData);
   const test = toTensor(testData);
 
-  const modelBaseline = tf.sequential();
-  modelBaseline.add(tf.layers.flatten({ inputShape: [28, 28, 1] }));
-  modelBaseline.add(tf.layers.dense({ units: 10, activation: 'softmax' }));
+  const modelBaseline = createBaselineModel(tf);
   modelBaseline.compile({
     optimizer: tf.train.adam(1e-3),
     loss: 'categoricalCrossentropy',
