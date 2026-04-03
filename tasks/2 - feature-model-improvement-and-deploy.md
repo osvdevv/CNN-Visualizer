@@ -1,211 +1,206 @@
-# Task Plan - `feature/model-improvement-and-cloudflare-deploy`
+# Task Plan - `feature/model-improvement`
 
-## Assigned to: osvdevv
+## Assigned to: @osvdevv
 
 ## Branch Goal
 
-Deliver Phase 2 of CNN Visualizer by improving model quality and production readiness:
+Capture only the model-improvement work completed in Phase 2:
 
-1. Improve digit recognition quality versus the MVP baseline.
-2. Add measurable evaluation metrics and acceptance thresholds.
-3. Improve preprocessing and prediction UX for better real-world inputs.
-4. Add CI/CD deployment with GitHub Actions to Cloudflare Pages.
+1. Add a dedicated training workspace for baseline and CNN experiments.
+2. Introduce a reproducible Python training flow with TensorFlow/Keras.
+3. Upgrade the model architecture and export pipeline used by the frontend.
+4. Align browser preprocessing more closely with the improved training setup.
 
 ## Expected Outcome (Definition of Done)
 
-- Model quality improves on validation/test metrics (accuracy and confusion matrix reviewed).
-- The app uses a trained TensorFlow.js model artifact (not random weights).
-- Predictions are more stable for handwritten `0-9` across repeated attempts.
-- UI includes clearer confidence feedback and error states for model/runtime issues.
-- A GitHub Actions workflow builds and deploys automatically to Cloudflare Pages on `main`.
-- Deployment secrets are documented and pipeline can be rerun safely.
+- A reusable training workspace exists under `training/` for baseline and CNN runs.
+- A Python workspace exists under `training/python/` using `uv` + Python `3.12`.
+- The project can train `cnn-visualizer-cnn-v2`, export weights, and regenerate TF.js artifacts.
+- `public/model/model.json` and `public/model/group1-shard1of1.bin` correspond to the new CNN.
+- Browser preprocessing is more robust for faint or slightly broken strokes.
+- Training outputs include reproducible metrics and summary artifacts.
 
 ## Minimum File Structure
 
 ```text
 src/
-  main.ts
   canvas/
-    DrawCanvas.ts
     preprocess.ts
-    PixelGrid.ts
-  nn/
-    model.ts
-    predict.ts
-  ui/
-    PredictionPanel.ts
+training/
+  README.md
+  package.json
+  train-baseline.js
+  train-cnn.js
+  model-factory.js
+  tfjs-export.js
+  export-python-model.js
+  python/
+    README.md
+    pyproject.toml
+    uv.lock
+    train_cnn.py
+    artifacts/
+      cnn-weights.json
+      training-summary.json
 public/
   model/
     model.json
-    group1-shard*.bin
-.github/
-  workflows/
-    deploy-cloudflare-pages.yml
-scripts/
-  validate-model-assets.mjs
-docs/
-  09-model-improvement-and-deploy.md
+    group1-shard1of1.bin
 ```
 
-## Step-by-Step Plan (Recommended Order)
+## Implemented Scope
 
-## 1) Baseline Evaluation Snapshot
+## 1) Training Workspace Setup
 
-Implement:
+Implemented:
 
-1. Capture current MVP behavior on a fixed test set of drawn digits.
-2. Record top-1 accuracy and common confusion pairs (`3/5`, `4/9`, etc.).
-3. Save baseline metrics in docs for before/after comparison.
+1. Added a dedicated `training/` workspace with its own `package.json`.
+2. Added reusable scripts for:
+   - `train:baseline`
+   - `train:cnn`
+   - `export:python-model`
+3. Added a shared model factory and TF.js artifact exporter.
 
-Acceptance criterion:
+Acceptance delivered:
 
-- There is a documented baseline metric snapshot.
+- Model experiments can be run without coupling training logic to the frontend app.
 
-## 2) Improve Training Data Strategy
+## 2) Baseline and CNN Experiment Scripts
 
-Implement:
+Implemented:
 
-1. Start from MNIST and add augmentation representative of canvas input:
-   - random shift
-   - light rotation
-   - stroke thickness variation
-   - mild noise
-2. Ensure train/val/test split is deterministic.
-3. Export final trained model in TensorFlow.js format.
+1. Added `training/train-baseline.js` for the linear baseline.
+2. Added `training/train-cnn.js` for a JS CNN training path.
+3. Centralized architecture definitions in `training/model-factory.js`.
 
-Acceptance criterion:
+Acceptance delivered:
 
-- New model artifacts are generated with reproducible training settings.
+- The repo now has a baseline reference plus a CNN training path for comparison.
 
-## 3) Upgrade Model Architecture
+## 3) Python Training Workspace
 
-Implement:
+Implemented:
 
-1. Replace weak baseline architecture with a compact CNN stack.
-2. Add regularization and normalization where useful:
-   - dropout
+1. Added `training/python/pyproject.toml` with TensorFlow and NumPy dependencies.
+2. Added `training/python/uv.lock` and documented the `uv` workflow.
+3. Added `training/python/train_cnn.py` with CLI flags and env-var overrides for:
+   - dataset size
+   - epochs
+   - batch size
+   - patience
+   - validation split
+   - learning rate
+   - seed
+4. Added export targets for:
+   - `training/python/artifacts/cnn-weights.json`
+   - `training/python/artifacts/training-summary.json`
+
+Acceptance delivered:
+
+- Training is reproducible and can be rerun locally with a managed Python toolchain.
+
+## 4) Model Architecture Upgrade
+
+Implemented:
+
+1. Replaced the weaker baseline-style path with `cnn-visualizer-cnn-v2`.
+2. Added a deeper CNN stack with:
+   - two convolutional blocks
    - batch normalization
-3. Tune learning rate and early stopping strategy.
+   - max pooling
+   - dropout
+   - dense head with regularization
+3. Added training callbacks for:
+   - early stopping
+   - learning-rate reduction on plateau
 
-Acceptance criterion:
+Acceptance delivered:
 
-- Validation accuracy improves meaningfully versus baseline.
+- The repo now trains and exports a stronger CNN architecture than the MVP baseline.
 
-## 4) Improve Preprocessing Robustness
+## 5) Canvas-Style Data Augmentation
 
-Implement:
+Implemented:
 
-1. Revisit centering/scaling to preserve digit shape better.
-2. Add optional denoising for accidental dots or tiny strokes.
-3. Ensure intensity inversion and normalization match training pipeline exactly.
+1. Added random translation, rotation, and zoom in the Python pipeline.
+2. Added mild morphology variation to simulate thicker/thinner strokes.
+3. Added light Gaussian noise and deterministic seed handling.
 
-Acceptance criterion:
+Acceptance delivered:
 
-- Same user drawing style yields more consistent predictions.
+- The training pipeline better reflects real browser-drawn digits instead of clean MNIST only.
 
-## 5) Better Prediction UX
+## 6) Browser Preprocessing Alignment
 
-Implement:
+Implemented:
 
-1. Highlight top-3 classes, not only top-1.
-2. Add confidence quality hints:
-   - high confidence
-   - medium confidence
-   - low confidence / ambiguous
-3. Add clear UI messaging when model load or inference fails.
+1. Updated `src/canvas/preprocess.ts` to apply light dilation before box detection.
+2. Added an explicit ink threshold for bounding-box extraction.
+3. Added optional debug output for the normalized `28x28` matrix.
 
-Acceptance criterion:
+Acceptance delivered:
 
-- Users can interpret uncertain predictions without guessing.
+- The browser input pipeline is less brittle for thin strokes and small gaps.
 
-## 6) Model Asset Validation Guard
+## 7) TF.js Export Pipeline and Artifacts
 
-Implement:
+Implemented:
 
-1. Add a script to validate `public/model/model.json` and shard existence.
-2. Run this check in CI before deployment.
+1. Added `training/export-python-model.js` to rebuild browser artifacts from Python weights.
+2. Added `training/tfjs-export.js` to write `model.json` and shard binaries.
+3. Regenerated:
+   - `public/model/model.json`
+   - `public/model/group1-shard1of1.bin`
 
-Suggested checks:
+Acceptance delivered:
 
-- Valid JSON parse
-- `weightsManifest` exists
-- Every shard path resolves on disk
+- The frontend now consumes artifacts exported from the improved training flow.
 
-Acceptance criterion:
+## 8) Recorded Training Results
 
-- Invalid model assets fail fast in CI.
+Current training summary artifact reports:
 
-## 7) Cloudflare Pages Deployment via GitHub Actions
+1. `best_val_accuracy`: `0.9905`
+2. `test_accuracy`: `0.9910`
+3. Focus digit accuracy:
+   - `4`: `0.9817`
+   - `7`: `0.9767`
+   - `8`: `0.9938`
+   - `9`: `0.9891`
+4. Main confusion pairs observed:
+   - `7 -> 2`
+   - `4 -> 9`
 
-Implement:
+Acceptance delivered:
 
-1. Create workflow `.github/workflows/deploy-cloudflare-pages.yml`.
-2. On push to `main`:
-   - checkout
-   - install dependencies
-   - run `npm ci`
-   - run `npm run build`
-   - deploy `dist/` to Cloudflare Pages
-3. Configure required GitHub secrets:
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
+- The branch includes measurable model-quality outputs instead of only ad hoc training runs.
 
-Required repository variables/secrets:
+## 9) Documentation Added
 
-- `CLOUDFLARE_PROJECT_NAME` (repo variable or hardcoded in workflow)
+Implemented:
 
-Acceptance criterion:
+1. Added `training/README.md` to explain the training workspace.
+2. Added `training/python/README.md` with setup, smoke test, and full-run instructions.
 
-- Push to `main` triggers successful build+deploy and updates Pages site.
+Acceptance delivered:
 
-## 8) Post-Deploy Verification
+- Another developer can retrain the model and regenerate browser artifacts from repo docs.
 
-Checklist:
+## Recommended Commit History
 
-1. Confirm app loads from Cloudflare Pages URL.
-2. Confirm model files are reachable in production:
-   - `/model/model.json`
-   - shard files from manifest
-3. Draw `0`, `1`, `7`, `8`, `9` and verify coherent predictions.
-4. Confirm retry/error UI works when model path is intentionally broken (staging test).
-
-Acceptance criterion:
-
-- Production app behaves like local build and serves model assets correctly.
-
-## 9) Documentation and Handover
-
-Implement:
-
-1. Add `docs/09-model-improvement-and-deploy.md` with:
-   - training decisions
-   - metric results
-   - deployment setup
-   - rollback steps
-2. Update README with quick deploy notes.
-
-Acceptance criterion:
-
-- Another developer can retrain and redeploy without tribal knowledge.
-
-## 10) Recommended Commit Sequence
-
-Suggested commits:
+Observed branch commits:
 
 ```text
-feat(model): improve cnn architecture, training pipeline, and tfjs artifacts
-feat(ui): add top-3 confidence feedback and stronger prediction states
-ci(deploy): add cloudflare pages github action with model validation
-docs: add phase-2 model improvement and deploy guide
+80863fe Add training scripts and package configuration for CNN Visualizer
+93c8626 model improvement
+401189c feat: enhance CNN model architecture and training process
 ```
 
 ## Common Risks and Quick Fixes
 
-- Production can load app but not model:
-  - verify `public/model` copied to build output and URL paths are absolute from site root.
-- Better validation metric but poor real drawing accuracy:
-  - align augmentation and preprocess exactly with browser canvas characteristics.
-- CI deploy fails with auth error:
-  - recheck Cloudflare token scopes and account id secret values.
-- Large model slows first prediction:
-  - keep architecture compact, run warmup once, and monitor bundle size.
+- Python environment fails to install TensorFlow:
+  - use the documented `uv` + Python `3.12` workflow instead of the system Python.
+- Exported weights do not match the browser model:
+  - regenerate artifacts through `training/export-python-model.js` so the TF.js topology and weights stay aligned.
+- Browser predictions still look inconsistent:
+  - recheck preprocess alignment and compare with the saved `training-summary.json` confusion pairs.
