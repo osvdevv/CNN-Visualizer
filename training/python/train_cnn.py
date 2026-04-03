@@ -14,6 +14,9 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 import numpy as np
 import tensorflow as tf
 
+MODEL_ARCHITECTURE = "cnn-visualizer-cnn-v2"
+FOCUS_DIGITS = (4, 7, 8, 9)
+
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 TRAINING_DIR = SCRIPT_DIR.parent
 REPO_ROOT = TRAINING_DIR.parent
@@ -52,12 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the CNN Visualizer model in Python.")
     parser.add_argument("--train-size", type=positive_int, default=env_int("MNIST_TRAIN_SIZE", 60000))
     parser.add_argument("--test-size", type=positive_int, default=env_int("MNIST_TEST_SIZE", 10000))
-    parser.add_argument("--epochs", type=positive_int, default=env_int("EPOCHS", 10))
+    parser.add_argument("--epochs", type=positive_int, default=env_int("EPOCHS", 12))
     parser.add_argument("--batch-size", type=positive_int, default=env_int("BATCH_SIZE", 128))
-    parser.add_argument("--patience", type=positive_int, default=env_int("EARLY_STOPPING_PATIENCE", 2))
+    parser.add_argument("--patience", type=positive_int, default=env_int("EARLY_STOPPING_PATIENCE", 3))
     parser.add_argument("--seed", type=int, default=env_int("SEED", 42))
     parser.add_argument("--validation-split", type=ratio, default=env_float("VALIDATION_SPLIT", 0.1))
-    parser.add_argument("--learning-rate", type=float, default=env_float("LEARNING_RATE", 1e-3))
+    parser.add_argument("--learning-rate", type=float, default=env_float("LEARNING_RATE", 7.5e-4))
     parser.add_argument("--weights-json", type=pathlib.Path, default=DEFAULT_WEIGHTS_JSON)
     parser.add_argument("--summary-json", type=pathlib.Path, default=DEFAULT_SUMMARY_JSON)
     parser.add_argument("--export-dir", type=pathlib.Path, default=DEFAULT_EXPORT_DIR)
@@ -106,45 +109,98 @@ def load_mnist(train_size: int, test_size: int, seed: int) -> tuple[np.ndarray, 
     return x_train, y_train, x_test, y_test
 
 
+class CanvasStyleAugmentation(tf.keras.layers.Layer):
+    def __init__(self, seed: int = 42) -> None:
+        super().__init__(name="canvas_style_augment")
+        self.translate = tf.keras.layers.RandomTranslation(
+            height_factor=0.12,
+            width_factor=0.12,
+            fill_mode="constant",
+            fill_value=0.0,
+            seed=seed,
+        )
+        self.rotate = tf.keras.layers.RandomRotation(
+            factor=0.12,
+            fill_mode="constant",
+            fill_value=0.0,
+            seed=seed + 1,
+        )
+        self.zoom = tf.keras.layers.RandomZoom(
+            height_factor=(-0.18, 0.08),
+            width_factor=(-0.18, 0.08),
+            fill_mode="constant",
+            fill_value=0.0,
+            seed=seed + 2,
+        )
+
+    def call(self, inputs: tf.Tensor, training: bool = False) -> tf.Tensor:
+        x = inputs
+        if not training:
+            return x
+
+        x = self.translate(x, training=training)
+        x = self.rotate(x, training=training)
+        x = self.zoom(x, training=training)
+
+        dilated = tf.nn.max_pool2d(x, ksize=3, strides=1, padding="SAME")
+        eroded = -tf.nn.max_pool2d(-x, ksize=3, strides=1, padding="SAME")
+        selector = tf.random.uniform([tf.shape(x)[0], 1, 1, 1], dtype=x.dtype)
+        morphed = tf.where(selector < 0.35, dilated, tf.where(selector > 0.82, eroded, x))
+        noise = tf.random.normal(tf.shape(morphed), stddev=0.02, dtype=morphed.dtype)
+        return tf.clip_by_value(morphed + noise, 0.0, 1.0)
+
+    def build(self, input_shape: tf.TensorShape) -> None:
+        self.translate.build(input_shape)
+        self.rotate.build(input_shape)
+        self.zoom.build(input_shape)
+        super().build(input_shape)
+
+
+def conv_bn_relu(
+    x: tf.Tensor,
+    filters: int,
+    name_prefix: str,
+) -> tf.Tensor:
+    x = tf.keras.layers.Conv2D(
+        filters=filters,
+        kernel_size=3,
+        padding="same",
+        use_bias=False,
+        name=f"{name_prefix}_conv",
+    )(x)
+    x = tf.keras.layers.BatchNormalization(name=f"{name_prefix}_bn")(x)
+    return tf.keras.layers.ReLU(name=f"{name_prefix}_relu")(x)
+
+
 def create_core_model() -> tf.keras.Model:
     inputs = tf.keras.Input(shape=(28, 28, 1), name="image")
-    x = tf.keras.layers.Conv2D(32, 3, padding="same", activation="relu", name="conv1")(inputs)
-    x = tf.keras.layers.MaxPooling2D(pool_size=2, strides=2, name="pool1")(x)
-    x = tf.keras.layers.Conv2D(64, 3, padding="same", activation="relu", name="conv2")(x)
-    x = tf.keras.layers.MaxPooling2D(pool_size=2, strides=2, name="pool2")(x)
+    x = conv_bn_relu(inputs, 32, "block1a")
+    x = conv_bn_relu(x, 32, "block1b")
+    x = tf.keras.layers.MaxPooling2D(pool_size=2, strides=2, name="block1_pool")(x)
+    x = tf.keras.layers.Dropout(0.05, name="block1_dropout")(x)
+
+    x = conv_bn_relu(x, 64, "block2a")
+    x = conv_bn_relu(x, 64, "block2b")
+    x = tf.keras.layers.MaxPooling2D(pool_size=2, strides=2, name="block2_pool")(x)
+    x = tf.keras.layers.Dropout(0.1, name="block2_dropout")(x)
+
     x = tf.keras.layers.Flatten(name="flatten")(x)
-    x = tf.keras.layers.Dense(128, activation="relu", name="dense1")(x)
-    x = tf.keras.layers.Dropout(0.5, name="dropout")(x)
+    x = tf.keras.layers.Dense(128, use_bias=False, name="dense1")(x)
+    x = tf.keras.layers.BatchNormalization(name="dense1_bn")(x)
+    x = tf.keras.layers.ReLU(name="dense1_relu")(x)
+    x = tf.keras.layers.Dropout(0.3, name="dense1_dropout")(x)
     outputs = tf.keras.layers.Dense(10, activation="softmax", name="predictions")(x)
-    return tf.keras.Model(inputs=inputs, outputs=outputs, name="cnn_visualizer_cnn_v1")
+    return tf.keras.Model(inputs=inputs, outputs=outputs, name="cnn_visualizer_cnn_v2")
 
 
-def create_augmentation_model() -> tf.keras.Model:
-    inputs = tf.keras.Input(shape=(28, 28, 1), name="augment_input")
-    x = tf.keras.layers.RandomTranslation(
-        height_factor=0.1,
-        width_factor=0.1,
-        fill_mode="constant",
-        fill_value=0.0,
-        name="translate",
-    )(inputs)
-    x = tf.keras.layers.RandomRotation(
-        factor=0.08,
-        fill_mode="constant",
-        fill_value=0.0,
-        name="rotate",
-    )(x)
-    return tf.keras.Model(inputs=inputs, outputs=x, name="mnist_canvas_augment")
-
-
-def create_training_model(core_model: tf.keras.Model, use_augmentation: bool) -> tf.keras.Model:
+def create_training_model(core_model: tf.keras.Model, use_augmentation: bool, seed: int) -> tf.keras.Model:
     inputs = tf.keras.Input(shape=(28, 28, 1), name="train_image")
     x = inputs
     if use_augmentation:
-        x = create_augmentation_model()(x)
+        x = CanvasStyleAugmentation(seed=seed)(x)
     outputs = core_model(x)
     return tf.keras.Model(inputs=inputs, outputs=outputs, name="cnn_visualizer_training_model")
-vx
+
 
 def compile_classifier(model: tf.keras.Model, learning_rate: float) -> None:
     model.compile(
@@ -154,11 +210,91 @@ def compile_classifier(model: tf.keras.Model, learning_rate: float) -> None:
     )
 
 
+def compute_digit_metrics(true_labels: np.ndarray, predicted_labels: np.ndarray) -> dict[str, object]:
+    confusion = tf.math.confusion_matrix(true_labels, predicted_labels, num_classes=10).numpy()
+    per_digit_accuracy: dict[str, float] = {}
+    per_digit_top_confusions: dict[str, list[dict[str, float | int]]] = {}
+
+    for digit in range(10):
+        row = confusion[digit]
+        support = int(row.sum())
+        correct = int(row[digit])
+        accuracy = float(correct / support) if support else 0.0
+        per_digit_accuracy[str(digit)] = accuracy
+
+        row_without_self = row.copy()
+        row_without_self[digit] = 0
+        top_confusions: list[dict[str, float | int]] = []
+        for predicted_digit in np.argsort(row_without_self)[::-1]:
+            count = int(row_without_self[predicted_digit])
+            if count == 0:
+                continue
+            top_confusions.append(
+                {
+                    "predicted_digit": int(predicted_digit),
+                    "count": count,
+                    "rate": float(count / support) if support else 0.0,
+                }
+            )
+            if len(top_confusions) == 3:
+                break
+        per_digit_top_confusions[str(digit)] = top_confusions
+
+    confusion_pairs: list[dict[str, float | int]] = []
+    for actual_digit in range(10):
+        support = int(confusion[actual_digit].sum())
+        for predicted_digit in range(10):
+            if actual_digit == predicted_digit:
+                continue
+            count = int(confusion[actual_digit, predicted_digit])
+            if count == 0:
+                continue
+            confusion_pairs.append(
+                {
+                    "actual_digit": actual_digit,
+                    "predicted_digit": predicted_digit,
+                    "count": count,
+                    "rate": float(count / support) if support else 0.0,
+                }
+            )
+
+    confusion_pairs.sort(key=lambda item: (item["count"], item["rate"]), reverse=True)
+
+    focus_digit_accuracy = {
+        str(digit): per_digit_accuracy[str(digit)] for digit in FOCUS_DIGITS if str(digit) in per_digit_accuracy
+    }
+
+    return {
+        "confusion_matrix": confusion.tolist(),
+        "per_digit_accuracy": per_digit_accuracy,
+        "per_digit_top_confusions": per_digit_top_confusions,
+        "focus_digit_accuracy": focus_digit_accuracy,
+        "top_confusion_pairs": confusion_pairs[:12],
+    }
+
+
+def print_focus_digit_report(metrics: dict[str, object]) -> None:
+    per_digit_accuracy = metrics["per_digit_accuracy"]
+    per_digit_top_confusions = metrics["per_digit_top_confusions"]
+    print("Focus digits:")
+    for digit in FOCUS_DIGITS:
+        accuracy = float(per_digit_accuracy[str(digit)]) * 100
+        confusions = per_digit_top_confusions[str(digit)]
+        if confusions:
+            top = confusions[0]
+            print(
+                f"  {digit}: {accuracy:.2f}% correct, most confused with "
+                f"{top['predicted_digit']} ({float(top['rate']) * 100:.2f}%)"
+            )
+        else:
+            print(f"  {digit}: {accuracy:.2f}% correct, no confusions recorded")
+
+
 def save_weights_json(model: tf.keras.Model, weights_json: pathlib.Path, metadata: dict[str, object]) -> None:
     weights_json.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "format": "cnn-visualizer.keras-weights.v1",
-        "architecture": "cnn-visualizer-cnn-v1",
+        "architecture": MODEL_ARCHITECTURE,
         "createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "metadata": metadata,
         "weights": [],
@@ -169,6 +305,7 @@ def save_weights_json(model: tf.keras.Model, weights_json: pathlib.Path, metadat
         payload["weights"].append(
             {
                 "index": index,
+                "name": getattr(model.weights[index], "path", model.weights[index].name),
                 "shape": list(array.shape),
                 "dtype": "float32",
                 "values": array.reshape(-1).tolist(),
@@ -209,7 +346,7 @@ def main() -> int:
 
     x_train, y_train, x_test, y_test = load_mnist(args.train_size, args.test_size, args.seed)
     core_model = create_core_model()
-    training_model = create_training_model(core_model, use_augmentation=not args.no_augment)
+    training_model = create_training_model(core_model, use_augmentation=not args.no_augment, seed=args.seed)
     compile_classifier(training_model, args.learning_rate)
 
     callbacks: list[tf.keras.callbacks.Callback] = [
@@ -223,7 +360,7 @@ def main() -> int:
             monitor="val_accuracy",
             mode="max",
             factor=0.5,
-            patience=max(1, args.patience),
+            patience=max(1, args.patience - 1),
             min_lr=1e-5,
         ),
     ]
@@ -243,7 +380,10 @@ def main() -> int:
     elapsed = time.perf_counter() - started_at
 
     compile_classifier(core_model, args.learning_rate)
-    test_loss, test_accuracy = core_model.evaluate(x_test, y_test, verbose=0)
+    probabilities = core_model.predict(x_test, batch_size=args.batch_size, verbose=0)
+    predicted_labels = np.argmax(probabilities, axis=1)
+    test_loss, test_accuracy = core_model.evaluate(x_test, y_test, batch_size=args.batch_size, verbose=0)
+    digit_metrics = compute_digit_metrics(y_test, predicted_labels)
 
     val_history = history.history.get("val_accuracy", [])
     train_history = history.history.get("accuracy", [])
@@ -251,7 +391,7 @@ def main() -> int:
     final_train_accuracy = train_history[-1] if train_history else None
 
     summary = {
-        "architecture": "cnn-visualizer-cnn-v1",
+        "architecture": MODEL_ARCHITECTURE,
         "train_size": int(x_train.shape[0]),
         "test_size": int(x_test.shape[0]),
         "epochs_requested": args.epochs,
@@ -267,10 +407,12 @@ def main() -> int:
         "test_loss": float(test_loss),
         "test_accuracy": float(test_accuracy),
         "history": history.history,
+        **digit_metrics,
     }
 
     print(f"Training finished in {elapsed:.2f}s")
     print(f"Test accuracy: {test_accuracy * 100:.2f}%")
+    print_focus_digit_report(digit_metrics)
 
     save_weights_json(core_model, args.weights_json, summary)
     save_summary(args.summary_json, summary)

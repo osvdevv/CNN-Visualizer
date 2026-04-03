@@ -3,6 +3,10 @@ const path = require('node:path');
 const tf = require('@tensorflow/tfjs');
 const { createCnnModel } = require('./model-factory');
 const { saveModelArtifacts } = require('./tfjs-export');
+const SUPPORTED_ARCHITECTURES = new Set([
+  'cnn-visualizer-cnn-v1',
+  'cnn-visualizer-cnn-v2',
+]);
 
 function parseArgs(argv) {
   const options = {
@@ -40,6 +44,10 @@ function assertWeightShape(index, expectedShape, actualShape) {
   }
 }
 
+function getWeightRef(weight) {
+  return weight.originalName || weight.name;
+}
+
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const rawPayload = fs.readFileSync(options.weightsJson, 'utf8');
@@ -49,7 +57,7 @@ async function main() {
     throw new Error(`Formato de pesos no soportado: ${String(payload.format)}`);
   }
 
-  if (payload.architecture !== 'cnn-visualizer-cnn-v1') {
+  if (!SUPPORTED_ARCHITECTURES.has(payload.architecture)) {
     throw new Error(`Arquitectura no soportada: ${String(payload.architecture)}`);
   }
 
@@ -61,17 +69,34 @@ async function main() {
     warmupOutput.dispose();
   }
 
-  const expectedShapes = model.weights.map((weight) => weight.shape);
-  if (!Array.isArray(payload.weights) || payload.weights.length !== expectedShapes.length) {
+  const expectedWeights = model.weights.map((weight) => ({
+    name: getWeightRef(weight),
+    shape: weight.shape,
+  }));
+
+  if (!Array.isArray(payload.weights) || payload.weights.length !== expectedWeights.length) {
     throw new Error(
-      `Numero de tensores incompatible: esperado ${expectedShapes.length}, recibido ${
+      `Numero de tensores incompatible: esperado ${expectedWeights.length}, recibido ${
         Array.isArray(payload.weights) ? payload.weights.length : 'valor invalido'
       }.`,
     );
   }
 
-  const tensors = payload.weights.map((entry, index) => {
-    assertWeightShape(index, expectedShapes[index], entry.shape);
+  const payloadWeightsByName =
+    payload.weights.every((entry) => typeof entry.name === 'string' && entry.name.length > 0)
+      ? new Map(payload.weights.map((entry) => [entry.name, entry]))
+      : null;
+
+  const tensors = expectedWeights.map((expectedWeight, index) => {
+    const entry = payloadWeightsByName
+      ? payloadWeightsByName.get(expectedWeight.name)
+      : payload.weights[index];
+
+    if (!entry) {
+      throw new Error(`No se encontro el peso ${expectedWeight.name} en el JSON exportado.`);
+    }
+
+    assertWeightShape(index, expectedWeight.shape, entry.shape);
     return tf.tensor(entry.values, entry.shape, 'float32');
   });
 
