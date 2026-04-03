@@ -11,17 +11,31 @@ interface InkBox {
 
 const TARGET_SIZE = 28;
 const INNER_SIZE = 20;
+const INK_THRESHOLD = 0.2;
+
+declare global {
+  interface Window {
+    __CNN_DEBUG_PREPROCESS__?: boolean;
+  }
+}
 
 export function preprocessTo28x28(imageData: ImageData): Matrix28 {
   const gray = toGrayscale(imageData);
-  const inkBox = findInkBoundingBox(gray);
+  const denoised = applyLightDilation(gray);
+  const inkBox = findInkBoundingBox(denoised, INK_THRESHOLD);
 
   if (!inkBox) {
     return createMatrix(TARGET_SIZE, TARGET_SIZE, 0);
   }
 
-  const centered = centerAndResize(gray, inkBox, TARGET_SIZE, TARGET_SIZE);
-  return normalize01(centered);
+  const centered = centerAndResize(denoised, inkBox, TARGET_SIZE, TARGET_SIZE);
+  const normalized = normalize01(centered);
+
+  if (typeof window !== 'undefined' && window.__CNN_DEBUG_PREPROCESS__) {
+    console.table(normalized.map((row) => row.map((value) => Number(value.toFixed(2)))));
+  }
+
+  return normalized;
 }
 
 export function toGrayscale(imageData: ImageData): GrayMatrix {
@@ -112,6 +126,38 @@ export function centerAndResize(
 
 export function normalize01(matrix: GrayMatrix): GrayMatrix {
   return matrix.map((row) => row.map((value) => clamp01(value)));
+}
+
+function applyLightDilation(matrix: GrayMatrix): GrayMatrix {
+  const height = matrix.length;
+  const width = matrix[0].length;
+  const output = createMatrix(height, width, 0);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      let maxValue = matrix[y][x];
+
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const ny = y + dy;
+        if (ny < 0 || ny >= height) {
+          continue;
+        }
+
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const nx = x + dx;
+          if (nx < 0 || nx >= width) {
+            continue;
+          }
+
+          maxValue = Math.max(maxValue, matrix[ny][nx]);
+        }
+      }
+
+      output[y][x] = maxValue;
+    }
+  }
+
+  return output;
 }
 
 function resizeBilinear(input: GrayMatrix, outWidth: number, outHeight: number): GrayMatrix {
