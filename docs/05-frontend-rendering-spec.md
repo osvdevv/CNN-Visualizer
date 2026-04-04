@@ -2,190 +2,163 @@
 
 ## 1. Rendering Scope
 
-This specification defines how frontend rendering must be implemented for CNN Visualizer V1 across:
+This document describes the frontend rendering that exists today in the baseline app.
 
-- 2D drawing input (Canvas API),
-- 3D layer visualization (Three.js),
-- timeline animation orchestration (GSAP),
-- activation shading (GLSL),
-- responsive UI composition.
+It covers:
 
-## 2. Rendering Goals
+- the drawing surface,
+- the `28x28` preview grid,
+- the prediction output panel,
+- the current layout and visual system.
 
-1. Preserve technical accuracy of CNN stage transitions.
-2. Maintain smooth interaction in modern desktop/mobile browsers.
-3. Keep animation and inference states synchronized.
-4. Render activations in a visually interpretable way.
+It does not describe future 3D visualization modules as if they already existed.
 
-## 3. Rendering Subsystems
+## 2. Current Rendering Goals
 
-### 3.1 Draw Surface (2D Canvas)
+1. Make digit drawing feel immediate and reliable.
+2. Show the processed model input clearly.
+3. Present prediction results with minimal ambiguity.
+4. Keep the UI stable across desktop and mobile widths.
 
-- Resolution: `280x280` internal buffer.
-- Input modalities: mouse + touch.
-- Stroke behavior:
-  - fixed or pressure-like radius (configurable),
-  - anti-aliased brush,
-  - high-contrast background/foreground.
-- Export:
-  - raw `ImageData`,
-  - optional debug preview.
+## 3. Current Rendering Surfaces
 
-### 3.2 Input Pixel Grid
+### 3.1 Draw Surface
 
-- Logical grid: `28x28`.
-- Cell value source: normalized preprocess output.
-- Color mapping:
-  - low values -> near-black,
-  - high values -> light/cyan-white range.
+Implemented in `src/canvas/DrawCanvas.ts`.
 
-### 3.3 3D Activation Renderer (Three.js)
+Current behavior:
 
-- Each layer represented as a structured geometry block/plane.
-- Activation values mapped to material color and optional emissive intensity.
-- Camera:
-  - smooth pan between layers,
-  - deterministic stage framing.
+- internal resolution: `280x280`
+- pointer-based drawing
+- touch support through pointer events
+- black stroke
+- rounded line caps and joins
+- default line width: `20`
+- exported value: full-canvas `ImageData`
 
-### 3.4 Kernel and Feature Map Animation (GSAP)
+### 3.2 Model Input Preview
 
-- Kernel traversal:
-  - frame progression matching convolution sweep order,
-  - highlighted `3x3` overlay region.
-- Feature map progression:
-  - value reveal synchronized with kernel movement,
-  - stage-based delays for readability.
+Implemented in `src/canvas/PixelGrid.ts`.
 
-### 3.5 Shader Layer (GLSL)
+Current behavior:
 
-- Vertex shader: geometry pass-through + optional intensity offset hooks.
-- Fragment shader:
-  - value-to-color transfer function,
-  - glow accent for high activations.
+- logical size: `28x28`
+- displayed as a `140x140` canvas using `5px` blocks
+- grayscale rendering:
+  - higher ink values look darker,
+  - background remains white
+- cleared state is a white canvas
 
-## 4. Scene Composition Rules
+### 3.3 Prediction Panel
 
-1. Maintain one root Three.js scene and one active camera.
-2. Group render objects by layer id for efficient hide/show updates.
-3. Avoid full scene reconstruction on every inference.
-4. Reuse geometries/materials when feasible.
-5. Destroy/rebuild only payload-dependent meshes when input changes.
+Implemented in `src/ui/PredictionPanel.ts`.
 
-## 5. Color Mapping Specification
+Current behavior:
 
-Activation color mapping must be deterministic and layer-local:
+- shows top predicted digit
+- shows top confidence percentage
+- renders a list of confidence bars for digits `0-9`
+- resets to zeroed rows on clear
 
-- Input: activation value `v`, layer min `min`, layer max `max`.
-- Normalize: `n = (v - min) / (max - min + epsilon)`.
-- Map:
-  - `n=0` -> dark base,
-  - mid-range -> cyan,
-  - high-range -> near-white + optional glow.
+### 3.4 Status and Error Feedback
 
-Reference transfer function:
+Implemented in `src/main.ts`.
 
-```ts
-function mapActivationToColor(n: number): [number, number, number] {
-  const t = clamp(n, 0, 1);
-  const r = lerp(0.02, 0.85, t);
-  const g = lerp(0.10, 0.95, t);
-  const b = lerp(0.12, 1.00, t);
-  return [r, g, b];
-}
-```
+Current behavior:
 
-## 6. Animation Timeline Contract
+- loading pill while the model initializes
+- success pill when the model is ready
+- error pill and retry button when load fails
 
-All stage transitions must be orchestrated from a single timeline controller.
+## 4. Layout Contract
 
-Required commands:
+The app currently renders:
 
-- `step()`
-- `play()`
-- `pause()`
-- `setSpeed(multiplier)`
-- `reset()`
+1. a hero/header card,
+2. a draw card,
+3. a preview card,
+4. a result card.
 
-Timeline responsibilities:
+Desktop layout:
 
-1. Trigger layer render transitions in sequence.
-2. Trigger kernel traversal at convolution stages only.
-3. Trigger UI stage text updates.
-4. Trigger output bar reveal at final stage.
+- three-column workspace grid:
+  - draw,
+  - preview,
+  - prediction.
 
-## 7. UI Layout and Responsiveness
+Mobile layout:
 
-### Desktop Layout
+- cards stack into a single column below `980px`.
 
-- Left: draw canvas + input grid.
-- Center: 3D scene.
-- Right: step panel + output bars.
+## 5. Visual System
 
-### Mobile Layout
+Current visual language comes from `src/style.css`:
 
-- Vertical stacking with prioritized ordering:
-  1. draw canvas,
-  2. prediction output,
-  3. condensed visualization,
-  4. collapsible step panel.
+- warm neutral background gradients
+- cream card surfaces
+- orange accent color for primary actions and prediction emphasis
+- `Space Grotesk` for main text
+- `IBM Plex Mono` for technical labels and percentages
 
-### Responsive Rules
+This is the actual visual system committed in the repo today.
 
-- Minimum tap target size for controls.
-- No clipped stage labels.
-- Scene camera/framing recalculated on viewport changes.
+## 6. Interaction Rules
 
-## 8. Performance Budgets
+- `Predict` must be a manual user action.
+- `Clear` must wipe:
+  - the draw canvas,
+  - the `28x28` preview,
+  - the prediction panel.
+- `Retry model load` must only appear after a model-load failure.
+- Disabling the predict button during inference is required to avoid overlapping requests.
 
-Targets for interactive quality:
+## 7. Responsiveness Rules
 
-1. Input stroke feedback should feel immediate (<1 frame perceived lag on typical hardware).
-2. Stage transitions should remain visually smooth under standard device load.
-3. Inference + render update should not cause prolonged UI blocking.
-4. Repeated draw/predict cycles should not show unbounded memory growth.
+- Canvas must remain readable and tappable on mobile.
+- Preview and result cards must stack without clipping.
+- Buttons must remain usable on narrow widths.
+- Prediction bars must remain legible after wrap/stack transitions.
 
-## 9. Frontend Module Contracts
+## 8. Performance Expectations
+
+For the current baseline UI:
+
+1. drawing should feel immediate,
+2. preview rendering should update within the predict cycle,
+3. repeated draw/predict/clear usage should not cause obvious degradation,
+4. model warmup should happen once after load.
+
+## 9. Current Frontend Module Contracts
 
 - `DrawCanvas`
-  - provides `getImageData()`, `clear()`, and draw event hooks.
+  - provides `clear()` and `exportImageData()`
+- `preprocess.ts`
+  - returns `Matrix28`
 - `PixelGrid`
-  - accepts `28x28` normalized matrix.
-- `LayerRenderer`
-  - accepts structured activation payloads.
-- `KernelAnim`
-  - accepts convolution stage metadata + timing.
-- `FeatureMap`
-  - accepts per-position value stream.
-- `StepPanel`
-  - accepts stage metadata and active index.
-- `OutputBar`
-  - accepts class confidence vector (length `10`).
+  - accepts `Matrix28`
+- `PredictionPanel`
+  - accepts `PredictionResult`
+- `src/nn/model.ts`
+  - returns a cached `LayersModel`
+- `src/nn/predict.ts`
+  - returns ranked confidences for `10` classes
 
-## 10. Error and Degradation Behavior
+## 10. Future Visualization Boundary
 
-- If WebGL is unavailable:
-  - fallback to simplified 2D activation representation.
-- If device performance is low:
-  - lower geometry density and disable expensive glow effects.
-- If shader compile fails:
-  - fallback to standard material without shader effects.
+If advanced visualization is added later, it should be treated as a new rendering layer on top of the current baseline UI, not as something already present.
+
+That future work may introduce:
+
+- intermediate activation views,
+- staged playback controls,
+- richer rendering modules.
+
+But those are not part of the current rendering contract.
 
 ## 11. Verification Checklist
 
-1. Canvas interaction works for mouse and touch.
-2. `28x28` grid visually matches current drawing.
-3. Layer visuals update correctly for each inference run.
-4. Kernel animation path is accurate and repeatable.
-5. Step/auto modes remain synchronized with stage UI.
-6. Mobile layout remains usable and visually coherent.
-7. No rendering artifacts after repeated resets.
-
-## 12. Why This Rendering Design
-
-This rendering design is selected because it provides a practical balance of:
-
-1. pedagogical clarity (users can follow each CNN stage),
-2. real-time performance (browser-native rendering stack),
-3. maintainability (modular rendering contracts),
-4. visual expressiveness (3D layers + shader-based activation encoding).
-
+1. Mouse and touch drawing both work.
+2. The preview grid matches the processed input.
+3. Top class and confidence bars update after prediction.
+4. Loading and error states are visible and understandable.
+5. The layout remains usable below `980px`.

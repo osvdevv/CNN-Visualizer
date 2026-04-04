@@ -2,140 +2,133 @@
 
 ## 1. Purpose
 
-CNN Visualizer is a browser-native educational application that shows, in real time, how a convolutional neural network (CNN) processes a handwritten digit from input pixels to final prediction.
+CNN Visualizer is a browser-native application for drawing handwritten digits and running CNN inference fully in the browser.
 
-The product combines:
+At the current stage of the repository, the project includes:
 
-- Digit drawing and preprocessing on a 2D canvas.
-- On-device inference using TensorFlow.js and a pre-trained MNIST model.
-- Layer-by-layer 3D/animated visualization of activations and kernel traversal.
-- Human-readable explanation of each stage in the inference pipeline.
+- a working baseline frontend for draw -> preprocess -> predict,
+- an improved CNN model exported as TensorFlow.js artifacts,
+- a local training workspace for retraining and regenerating model assets,
+- a planned next phase for Cloudflare Pages deployment through GitHub Actions.
 
-The core intent is not only to classify digits, but to make the CNN decision process observable and understandable.
+## 2. Current Product State
 
-## 2. Product Goals
+The repo is no longer only a static prototype plan. It now has two implemented tracks:
 
-1. Enable users to draw any digit from 0-9 and receive immediate inference feedback.
-2. Visualize intermediate CNN behavior step by step, not just final output.
-3. Keep all computation client-side (no backend dependency).
-4. Provide a technically accurate but intuitive learning experience for CNN fundamentals.
-5. Ship as a lightweight static web app with straightforward deployment.
+1. Browser inference baseline:
+   - draw on a `280x280` canvas,
+   - preprocess to `28x28`,
+   - load `public/model/model.json`,
+   - run TensorFlow.js inference,
+   - show top prediction and the confidence distribution for digits `0-9`.
+2. Model-improvement workflow:
+   - baseline and CNN experiments in `training/`,
+   - reproducible Python training in `training/python/`,
+   - export of trained weights back into `public/model/`.
 
-## 3. Scope (V1)
+## 3. Scope In Repo Today
 
-### In Scope
+### Implemented
 
-- Interactive drawing surface (mouse and touch).
-- Downsampling and normalization from drawing resolution to 28x28 grayscale tensor.
-- Loading a pre-trained MNIST TensorFlow.js model from static assets.
-- Running inference and rendering:
-  - top prediction,
-  - confidence distribution across digits 0-9.
-- Extraction and visualization of intermediate activations.
-- Layer progression visualization:
-  - Input,
-  - Conv2D blocks,
-  - MaxPooling,
-  - Flatten,
-  - Dense,
-  - Output.
-- Kernel traversal animation for convolution operations.
-- Two execution modes:
-  - step-by-step,
-  - automatic playback with speed control.
-- Responsive UI for desktop and mobile.
-- Static deployment to GitHub Pages with CI-based publish flow.
+- Freehand digit drawing with pointer events.
+- Browser preprocessing aligned to the current model input expectations.
+- `28x28` preview grid for the processed input.
+- In-browser prediction using TensorFlow.js.
+- Top-class and all-class confidence UI.
+- Model loading, warmup, retry, and error messaging.
+- Local training scripts for baseline and CNN experiments.
+- Python `uv` workflow for training `cnn-visualizer-cnn-v2`.
+- Export pipeline that regenerates browser-ready TF.js artifacts.
 
-### Out of Scope (V1)
+### Planned Next
 
-- Model training or fine-tuning in the browser.
-- Multi-dataset support beyond MNIST.
-- User authentication, persistence, or cloud sync.
-- Server-side inference APIs.
-- Accessibility localization beyond base UI language.
-- Advanced experiment tracking and analytics dashboards.
+- Cloudflare Pages deployment through GitHub Actions.
+- Deployment secrets/variables documentation.
+- Production verification for model asset paths and static hosting behavior.
 
-## 4. Target Users and Use Cases
+### Explicitly Not Implemented Yet
 
-### Target Users
+- Layer-by-layer 3D visualization.
+- Intermediate activation rendering in the UI.
+- Kernel traversal animation.
+- Step-by-step playback and auto-play timeline controls.
+- Backend inference services.
 
-- Students learning CNN fundamentals.
-- Developers exploring TensorFlow.js inference internals.
-- Educators demonstrating convolution and activation concepts live.
+## 4. Primary User Flows
 
-### Primary Use Cases
+### Browser User Flow
 
-1. User draws a digit and observes end-to-end inference.
-2. User inspects each layer activation to understand feature abstraction.
-3. User toggles between manual step mode and automated animation.
-4. User compares confidence changes after modifying the drawing.
+1. Open the application.
+2. Draw a digit on the canvas.
+3. Click `Predict`.
+4. The app preprocesses the drawing to `28x28`.
+5. The app runs the CNN in the browser.
+6. The UI shows:
+   - the processed input preview,
+   - the top predicted digit,
+   - confidence values for all `10` classes.
 
-## 5. High-Level User Flow
+### Developer / Maintainer Flow
 
-1. User opens the application.
-2. User draws a digit on the canvas.
-3. System preprocesses drawing into a normalized 28x28 input tensor.
-4. System executes model inference and collects intermediate layer outputs.
-5. UI renders:
-   - input pixel grid,
-   - layer-by-layer activation progression,
-   - convolution kernel movement,
-   - output confidence bars.
-6. User replays stages, adjusts playback speed, or redraws input.
+1. Retrain the model in `training/` or `training/python/`.
+2. Regenerate `public/model/model.json` and shard files.
+3. Validate local browser behavior against the updated artifacts.
+4. Prepare the app for the next deployment phase in Cloudflare.
 
-## 6. Functional Requirements
+## 5. Functional Requirements
 
-- FR-01: The app must allow freehand digit input with mouse and touch events.
-- FR-02: The input pipeline must convert drawn data to 28x28 normalized grayscale values compatible with MNIST CNN input.
-- FR-03: The model must load via `tf.loadLayersModel()` from local static files.
+- FR-01: The app must allow freehand digit input with mouse and touch.
+- FR-02: The browser pipeline must convert drawing data into a normalized `28x28` matrix.
+- FR-03: The model must load from local static files under `public/model/`.
 - FR-04: Inference must run entirely in-browser using TensorFlow.js.
-- FR-05: The system must expose intermediate outputs for all relevant model layers.
-- FR-06: The visualization engine must render per-layer activations with value-to-color mapping.
-- FR-07: The UI must animate convolution kernel traversal and feature-map construction.
-- FR-08: The app must provide both step mode and auto mode with adjustable speed.
-- FR-09: The output panel must display confidence values for classes 0-9 and emphasize the winning class.
-- FR-10: The app must support redraw/reset to restart inference cycles quickly.
+- FR-05: The output UI must display the top class and all class confidences.
+- FR-06: The repo must support retraining and TF.js artifact regeneration outside the browser runtime.
+- FR-07: Updated model artifacts must remain compatible with the browser input pipeline.
 
-## 7. Non-Functional Requirements
+## 6. Non-Functional Requirements
 
-- NFR-01: No backend runtime dependency for inference or visualization.
-- NFR-02: Smooth interaction on modern desktop and mobile browsers.
-- NFR-03: Deterministic preprocessing and reproducible inference for identical input.
-- NFR-04: Modular TypeScript codebase with clear separation between canvas, ML, visualization, and UI concerns.
-- NFR-05: Build and deploy through Vite + GitHub Pages without custom infrastructure.
-- NFR-06: Developer onboarding should be possible with standard Node.js tooling.
+- NFR-01: No backend runtime dependency for inference.
+- NFR-02: Repeated draw/predict/clear cycles must remain stable.
+- NFR-03: Preprocessing must be deterministic for identical inputs.
+- NFR-04: Training must be reproducible through documented local workflows.
+- NFR-05: The app must remain deployable as a static site.
+- NFR-06: Deployment docs must match the actual chosen hosting target.
 
-## 8. Technical Constraints and Assumptions
+## 7. Technical Stack
 
-- The pre-trained MNIST model is distributed as TensorFlow.js artifacts (`model.json` + weight shard files) under `public/model/`.
-- Visualization performance is bounded by browser GPU/CPU capabilities.
-- The first release prioritizes conceptual clarity over maximal model complexity.
-- Architecture must remain framework-light (Vanilla TypeScript + Vite) to preserve control and reduce overhead.
+### Runtime
 
-## 9. Success Criteria
+- TypeScript
+- Vite
+- `@tensorflow/tfjs`
+- Canvas API
 
-The V1 delivery is successful when:
+### Training
 
-1. A user can draw digits and consistently receive valid model predictions.
-2. Intermediate layer behavior is visible and synchronized with inference steps.
-3. Kernel and activation animations are understandable and stable.
-4. Output confidence UI reflects model outputs correctly in real time.
-5. The app is deployable as a static site and runs without backend services.
+- Node.js scripts in `training/`
+- Python `3.12` managed with `uv`
+- TensorFlow / Keras
+- NumPy
 
-## 10. Dependencies
+### Hosting Target
 
-- Runtime:
-  - `@tensorflow/tfjs`
-  - `three`
-  - `gsap`
-- Tooling:
-  - `vite`
-  - Node.js + npm
-- Hosting:
-  - GitHub Pages
-  - GitHub Actions (deployment workflow)
+- Cloudflare Pages
+- GitHub Actions
 
-## 11. Deliverable Definition for This Document
+## 8. Model and Artifact Assumptions
 
-This document defines what must be built at the product level for CNN Visualizer V1.
-Subsequent technical documents should elaborate implementation details for architecture, inference pipeline, rendering, roadmap, testing, and deployment.
+- The browser model is served from:
+  - `public/model/model.json`
+  - `public/model/group1-shard1of1.bin`
+- Current artifacts are produced from the improved `cnn-visualizer-cnn-v2` training flow.
+- The browser runtime assumes the site can resolve `/model/model.json` from the site root.
+
+## 9. Current Success Criteria
+
+The current milestone is successful when:
+
+1. A user can draw digits and receive stable browser predictions.
+2. The preprocessed `28x28` preview reflects the drawn input.
+3. The frontend loads the committed TF.js model artifacts without runtime errors.
+4. Another developer can retrain the model and regenerate browser artifacts from repo docs.
+5. The repository is ready for the next Cloudflare deployment phase.
