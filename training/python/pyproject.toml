@@ -1,0 +1,10 @@
+[project]
+name = "cnn-visualizer-python-training"
+version = "0.1.0"
+description = "Python training workspace for CNN Visualizer"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy>=1.26,<3",
+  "tensorflow==2.21.0",
+]

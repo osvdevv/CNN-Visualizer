@@ -2,206 +2,173 @@
 
 ## 1. Roadmap Goal
 
-This roadmap defines the execution plan for delivering CNN Visualizer V1 from baseline setup to production deployment.
+This roadmap reflects the sequence that matches the repository today:
 
-The plan is organized into sequential phases with explicit deliverables, dependencies, and exit criteria to reduce integration risk.
+1. establish a working browser inference baseline,
+2. improve the model and the training/export workflow,
+3. deploy the app to Cloudflare Pages through GitHub Actions,
+4. return to the broader visualization vision afterward.
 
-## 2. Delivery Principles
+## 2. Status Snapshot
 
-1. Deliver functional vertical slices early (drawing -> inference -> output).
-2. Keep architecture modular from day one to avoid costly refactors.
-3. Validate runtime correctness before visual polish.
-4. Protect performance and memory safety throughout implementation.
-5. Keep deployment pipeline operational before final feature freeze.
+Current milestone status:
+
+- Phase 1 - Browser Baseline: completed
+- Phase 2 - Model Improvement + Training Pipeline: completed
+- Phase 3 - Cloudflare Deploy: next
+- Phase 4 - Advanced Visualization: future
 
 ## 3. Phase Plan
 
-## Phase 1 - Canvas + Model Baseline (3-5 days)
+## Phase 1 - Browser Baseline
 
-### Objectives
+Status: completed
 
-- Enable freehand digit drawing.
-- Convert drawing into model-ready `28x28` input.
-- Load MNIST TensorFlow.js model.
-- Produce first prediction output.
+### Delivered
 
-### Scope
+- `DrawCanvas` for digit input
+- preprocessing to `28x28`
+- `PixelGrid` preview
+- browser model loading from `public/model`
+- prediction UI with top class and all class confidences
+- clear/reset and model retry flow
 
-- `DrawCanvas` input handling (mouse + touch).
-- Downsample/normalize pipeline.
-- `tf.loadLayersModel('/model/model.json')`.
-- Console/UI display of top prediction.
-- `28x28` input grid preview.
+### Exit Criteria Met
 
-### Exit Criteria
+1. User can draw and clear reliably.
+2. Model loads in the browser.
+3. Prediction returns a `10`-class confidence vector.
+4. The baseline UI works on desktop and mobile layouts.
 
-1. User can draw and clear canvas reliably.
-2. Preprocessing outputs deterministic `28x28` values.
-3. Model loads from static assets without runtime errors.
-4. Inference returns valid class distribution for digits `0-9`.
+## Phase 2 - Model Improvement + Training Pipeline
 
-## Phase 2 - Layer Visualization Foundation (1 week)
+Status: completed
 
-### Objectives
+### Delivered
 
-- Build layer-level visual representation of activations.
-- Synchronize model outputs with scene rendering.
-- Provide explanatory UI for each stage.
+- dedicated `training/` workspace
+- baseline and CNN experiment scripts
+- Python training workspace in `training/python/`
+- `cnn-visualizer-cnn-v2`
+- TensorFlow.js artifact export pipeline
+- updated `public/model/model.json` and shard
+- preprocessing alignment improvements in the browser
 
-### Scope
+### Recorded Outcome
 
-- Three.js scene setup and camera flow.
-- `LayerRenderer` for activation planes/blocks.
-- Activation value-to-color mapping.
-- `StepPanel` with layer name + description.
-- Initial orchestrator timeline.
+The committed training summary reports approximately:
 
-### Exit Criteria
+- best validation accuracy: `0.9905`
+- test accuracy: `0.9910`
 
-1. Activations from each relevant layer render in correct order.
-2. Step transitions are deterministic and repeatable.
-3. Layer labels and explanations align with rendered stage.
+### Exit Criteria Met
 
-## Phase 3 - Kernel + Feature Map Animation (1 week)
+1. Model training is reproducible from repo docs.
+2. Browser artifacts can be regenerated from the training flow.
+3. The improved CNN is committed under `public/model/`.
+4. Browser preprocessing is better aligned with real drawn digits.
 
-### Objectives
+## Phase 3 - Cloudflare Pages Deploy
 
-- Visualize convolution traversal mechanics.
-- Show progressive feature-map construction.
-- Introduce manual vs automatic playback controls.
+Status: next
 
-### Scope
+### Goal
 
-- `KernelAnim` frame-by-frame kernel sweep.
-- `FeatureMap` incremental build animation.
-- Playback modes: `step` and `auto`.
-- Speed control slider.
-- GLSL-based activation glow enhancement.
+Deploy the current static app to Cloudflare Pages through GitHub Actions.
 
-### Exit Criteria
+### Planned Scope
 
-1. Kernel path is spatially accurate relative to input grid.
-2. Feature-map build timing matches convolution progression.
-3. Playback controls remain synchronized with state machine.
-
-## Phase 4 - Output UX + Product Polish (3-4 days)
-
-### Objectives
-
-- Finalize prediction UI and visual consistency.
-- Ensure responsive behavior across device classes.
-- Complete deployment and release readiness.
-
-### Scope
-
-- `OutputBar` confidence bars for classes `0-9`.
-- Winner highlight pulse effect.
-- Responsive layout adjustments.
-- Theme/typographic polish.
-- GitHub Actions deployment to GitHub Pages.
+- `.github/workflows/deploy-cloudflare-pages.yml`
+- GitHub repository secrets for Cloudflare auth
+- repository variable for the Pages project name
+- build with `npm ci` and `npm run build`
+- deploy `dist/` with `cloudflare/wrangler-action@v3`
+- production verification that `/model/model.json` resolves correctly
 
 ### Exit Criteria
 
-1. Prediction UI is accurate and stable under repeated input.
-2. Mobile and desktop layouts are both usable.
-3. Production build deploys automatically from default branch.
-4. End-to-end acceptance checklist passes.
+1. Push to `main` builds and deploys automatically.
+2. The deployed site loads the model assets correctly.
+3. Draw -> preprocess -> predict works in production.
+4. The workflow can be rerun safely.
 
-## 4. Timeline Visualization
+## Phase 4 - Advanced Visualization
 
-```mermaid
-gantt
-    title CNN Visualizer V1 Roadmap
-    dateFormat  YYYY-MM-DD
-    excludes    weekends
+Status: future
 
-    section Phase 1
-    Canvas + Model Baseline       :p1, 2026-03-30, 5d
+### Goal
 
-    section Phase 2
-    Layer Visualization Foundation :p2, after p1, 7d
+Resume the original educational visualization track after deploy is stable.
 
-    section Phase 3
-    Kernel + FeatureMap Animation  :p3, after p2, 7d
+### Candidate Scope
 
-    section Phase 4
-    Output UX + Deployment Polish  :p4, after p3, 4d
-```
+- intermediate activation extraction
+- layer-by-layer explanation UI
+- step/auto progression modes
+- kernel traversal visualization
+- richer rendering modules if the product still needs them
 
-## 5. Dependency Graph
+### Exit Criteria
 
-1. Phase 2 depends on stable outputs from Phase 1 (`input tensor`, `activations`).
-2. Phase 3 depends on Phase 2 scene abstraction and timeline hooks.
-3. Phase 4 depends on Phase 1-3 runtime correctness.
-4. CI/CD setup can start in parallel but must be validated before phase closure.
+1. Visualization features are built on top of the stable baseline.
+2. Model/runtime correctness remains intact.
+3. New rendering work does not regress deployability.
 
-## 6. Workstream Breakdown
+## 4. Workstream Breakdown
 
-### ML Workstream
+### Frontend Runtime
 
-- Model asset management.
-- Inference and activation extraction.
-- Tensor lifecycle safety.
+- drawing
+- preprocessing
+- prediction UX
+- error states
 
-### Visualization Workstream
+### ML / Training
 
-- Three.js scene composition.
-- Activation rendering and color mapping.
-- Kernel and feature-map animations.
+- baseline experiments
+- CNN architecture iteration
+- Python training
+- TF.js export compatibility
 
-### UI Workstream
+### DevOps
 
-- Draw controls, mode toggles, speed control.
-- Step panel explanations.
-- Output confidence interface.
+- static build validation
+- Cloudflare Pages workflow
+- production asset verification
 
-### DevOps Workstream
+### Future Visualization
 
-- Vite production config.
-- GitHub Actions workflow.
-- GitHub Pages publish configuration.
+- activation extraction
+- render payload design
+- educational interaction model
 
-## 7. Milestones
+## 5. Current Sequencing Logic
 
-1. M1 - First valid inference on drawn input.
-2. M2 - Full layer progression visible in 3D.
-3. M3 - Kernel traversal + feature map animation complete.
-4. M4 - CI deploy + responsive UI + acceptance pass.
+The repo now follows this dependency order:
 
-## 8. Definition of Done per Phase
+1. stable browser baseline first,
+2. stronger model second,
+3. deployment third,
+4. advanced visualization after the runtime and artifact pipeline are stable.
 
-Each phase is complete only when:
+That order reduces the risk of building visualization complexity on top of unstable model or deployment behavior.
 
-1. Functional scope is implemented.
-2. Regression checks for prior phases pass.
-3. Performance remains within target interactive latency.
-4. Documentation updates reflect final behavior.
+## 6. Main Risks
 
-## 9. Risk Register and Mitigation
+- Risk: deploy docs or workflow target the wrong platform.
+  - Mitigation: keep deployment docs Cloudflare-only.
+- Risk: model artifacts and browser topology drift apart.
+  - Mitigation: regenerate through the shared export path.
+- Risk: preprocess changes improve local examples but hurt production behavior.
+  - Mitigation: validate with repeated handwritten digit checks.
+- Risk: visualization work restarts before deploy is stable.
+  - Mitigation: finish Cloudflare deployment first.
 
-- Risk: Preprocess mismatch with model expectation.
-  - Mitigation: golden-input tests with fixed expected predictions.
-- Risk: Tensor memory leak during repeated runs.
-  - Mitigation: mandatory `tf.tidy()` and periodic memory checks.
-- Risk: Animation/ML desynchronization.
-  - Mitigation: single orchestrator timeline authority.
-- Risk: Static asset path errors on GitHub Pages.
-  - Mitigation: environment-aware base path and CI smoke check.
-- Risk: Mobile GPU limitations.
-  - Mitigation: adaptive rendering quality and reduced geometry density.
+## 7. Release Gate For The Next Milestone
 
-## 10. Parallelization Opportunities
+The next milestone is complete when:
 
-1. UI shell and output components can be built while ML baseline is finalized.
-2. CI workflow scaffolding can run in parallel with visualization work.
-3. Step panel content authoring can proceed while kernel animation is implemented.
-
-## 11. Completion Gate for V1 Release
-
-Release candidate is approved when:
-
-1. All phase exit criteria are satisfied.
-2. Testing and acceptance criteria document is fully green.
-3. Production deployment from default branch is validated.
-4. No unresolved P0/P1 defects remain.
-
+1. Phase 3 deploy workflow exists,
+2. Cloudflare production deploy succeeds,
+3. model assets are reachable in production,
+4. browser prediction behavior matches the local production build.

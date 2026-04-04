@@ -2,183 +2,167 @@
 
 ## 1. Purpose
 
-This document defines the technical integration contract between CNN Visualizer and the pre-trained MNIST TensorFlow.js model, including loading, preprocessing alignment, inference execution, intermediate activation extraction, and runtime safety.
+This document defines the current integration contract between the frontend and the committed TensorFlow.js model artifacts.
 
-## 2. Integration Requirements
+It covers:
 
-1. Model must load from static assets only.
+- where the model lives,
+- how it is loaded,
+- what input shape it expects,
+- what output shape the UI expects,
+- how the artifacts are regenerated from training.
+
+## 2. Current Integration Requirements
+
+1. The browser model must load from static assets only.
 2. Inference must run entirely in-browser.
-3. Input preprocessing must match model expectations exactly.
-4. Intermediate layer outputs must be available for visualization.
-5. Tensor memory lifecycle must remain bounded during repeated use.
+3. Frontend preprocessing must stay compatible with the trained model.
+4. The exported model must produce a single `10`-class output tensor.
+5. Temporary tensors must be disposed predictably.
 
 ## 3. Model Asset Layout
 
-Expected production structure:
+Current browser model files:
 
 - `public/model/model.json`
-- `public/model/group1-shard1of1.bin` (or equivalent shard set)
+- `public/model/group1-shard1of1.bin`
 
-Load path contract:
+Current load contract:
 
 ```ts
-const MODEL_URL = '/model/model.json';
-const model = await tf.loadLayersModel(MODEL_URL);
+const model = await tf.loadLayersModel('/model/model.json');
 ```
 
-## 4. Runtime Initialization
+Important note:
 
-Initialization sequence:
+- the app currently assumes hosting from a root-served static path,
+- so deployment should preserve `/model/model.json` exactly as written.
 
-1. Initialize TensorFlow.js backend.
-2. Load base model from static path.
-3. Build intermediate-output model once.
-4. Warm up model with dummy input tensor.
-5. Expose ready state to UI.
+## 4. Artifact Provenance
+
+The committed browser artifacts are not hand-authored. They are regenerated from the training pipeline:
+
+1. train the model in `training/python/train_cnn.py`,
+2. write Python weights to `training/python/artifacts/cnn-weights.json`,
+3. rebuild TF.js artifacts through `training/export-python-model.js`,
+4. output the final browser artifacts into `public/model/`.
+
+Current architecture identifier:
+
+- `cnn-visualizer-cnn-v2`
+
+## 5. Runtime Initialization
+
+Current initialization sequence:
+
+1. Call `loadModel()`.
+2. Cache the resulting `Promise<tf.LayersModel>`.
+3. Warm up the model once with zeros shaped `[1, 28, 28, 1]`.
+4. Mark the UI as ready.
 
 Reference pattern:
 
 ```ts
-await tf.ready();
-const model = await tf.loadLayersModel('/model/model.json');
-const intermediateModel = tf.model({
-  inputs: model.inputs,
-  outputs: model.layers.map((l) => l.output),
+let modelPromise: Promise<tf.LayersModel> | null = null;
+
+modelPromise = tf.loadLayersModel('/model/model.json').then(async (model) => {
+  tf.tidy(() => {
+    const warmupInput = tf.zeros([1, 28, 28, 1]);
+    const warmupOutput = model.predict(warmupInput);
+    if (Array.isArray(warmupOutput)) {
+      warmupOutput.forEach((tensor) => tensor.dispose());
+    } else {
+      warmupOutput.dispose();
+    }
+  });
+
+  await tf.nextFrame();
+  return model;
 });
-tf.tidy(() => model.predict(tf.zeros([1, 28, 28, 1])));
 ```
 
-## 5. Input Compatibility Contract
+## 6. Input Compatibility Contract
 
-Model input requirements:
+The current model expects:
 
-- Shape: `[1, 28, 28, 1]`
-- Type: `float32`
-- Value range: `[0,1]` (or consistently inverted if model expects it)
+- shape: `[1, 28, 28, 1]`
+- dtype: `float32`
+- value range: `[0,1]`
 
-Validation checks before inference:
+Frontend preprocessing must preserve:
 
-1. Tensor rank is `4`.
-2. Spatial dimensions are exactly `28x28`.
-3. Channel count is `1`.
-4. No `NaN`/`Infinity` values.
+1. centered digit placement,
+2. grayscale intensity convention,
+3. single-channel input,
+4. compatibility with the improved CNN artifacts.
 
-## 6. Inference Execution Contract
+## 7. Inference Execution Contract
 
-For each predict request:
+For each prediction request:
 
-1. Build input tensor from preprocess output.
-2. Run base model for final output.
-3. Run intermediate model for layer outputs.
-4. Materialize outputs for UI/rendering payload.
-5. Dispose temporary tensors.
+1. Flatten the `28x28` matrix into a `Float32Array`.
+2. Build a `tensor4d` with shape `[1, 28, 28, 1]`.
+3. Call `model.predict(input)`.
+4. Ensure the result is a single tensor.
+5. Interpret output as probabilities, or apply `softmax` if needed.
+6. Copy values into JS arrays for the UI.
 
-Output contract:
-
-- `probabilities: number[10]`
-- `topClass: number`
-- `topConfidence: number`
-- `activations: LayerActivationPayload[]`
-
-## 7. Intermediate Model Strategy
-
-The intermediate model must be created once and reused.
-
-Rationale:
-
-- avoids repeated graph construction,
-- lowers runtime overhead,
-- ensures stable layer ordering.
-
-Layer metadata to capture:
-
-- `index`
-- `name`
-- `className/type`
-- `outputShape`
-
-## 8. Memory Management Rules
-
-Mandatory runtime rules:
-
-1. Wrap inferencing blocks in `tf.tidy()` where possible.
-2. Dispose non-retained tensors explicitly.
-3. Convert retained tensors to typed arrays immediately.
-4. Never recreate `model` or `intermediateModel` on each prediction.
-
-Recommended helper:
+Current output contract:
 
 ```ts
-function safeDispose(tensors: Array<tf.Tensor | null | undefined>) {
-  for (const t of tensors) if (t) t.dispose();
-}
-```
-
-## 9. Error Handling Contract
-
-### Recoverable Errors
-
-- Model asset fetch failure.
-- Weight shard mismatch.
-- Input shape mismatch.
-- Backend initialization issues.
-
-Required behavior:
-
-1. Return structured error code and user-safe message.
-2. Keep UI responsive.
-3. Allow retry without full page reload when feasible.
-
-### Structured Error Shape
-
-```ts
-type ModelError = {
-  code: 'MODEL_LOAD_FAILED' | 'INVALID_INPUT_SHAPE' | 'INFERENCE_FAILED' | 'BACKEND_ERROR';
-  message: string;
-  cause?: unknown;
+type PredictionResult = {
+  confidences: number[];
+  topClass: number;
+  topConfidence: number;
+  ranking: Array<{ digit: number; confidence: number }>;
 };
 ```
 
-## 10. Determinism and Reproducibility
+## 8. Error Handling
 
-For identical processed input matrices:
+Current repo behavior includes:
 
-1. Probability vector must remain stable within floating-point tolerance.
-2. Top class should remain consistent.
-3. Activation extraction order must not change between runs.
+- model-load error state in the UI,
+- retry support for failed model loads,
+- runtime guard if the model returns multiple outputs,
+- runtime guard if the output length is not `10`.
 
-Recommended tolerance for numerical checks: `1e-5` to `1e-4`.
+Current limitation:
 
-## 11. Performance Expectations
+- the repo does not yet implement a formal structured error type shared across layers.
 
-1. Model load occurs once per session.
-2. Warm-up executed only during initialization.
-3. Predict loop avoids unnecessary tensor copies.
-4. Intermediate payload conversion should be bounded and incremental-friendly.
+## 9. Memory Management Rules
 
-## 12. Integration Test Cases
+Current required rules:
 
-Minimum required test set:
+1. Warmup tensors must be disposed after initialization.
+2. Prediction-time temporary tensors must stay inside `tf.tidy()`.
+3. The copied output tensor must be disposed after reading values.
+4. The model must be reused instead of reloaded for every prediction.
 
-1. Model load success using local static assets.
-2. Invalid model path returns `MODEL_LOAD_FAILED`.
-3. Valid `28x28` input returns length-10 output vector.
-4. Invalid input shape triggers validation error.
-5. Intermediate activations exist for all configured layers.
-6. Repeated inference loop does not leak memory over N iterations.
+## 10. Operational Notes
 
-## 13. Security and Operational Notes
+- The frontend depends only on TF.js artifacts, not directly on the Python model.
+- Exported artifacts must remain in source control if they are the production runtime model.
+- Any topology change in training must still be export-compatible with the browser load path.
 
-1. No user-generated data is sent to external inference APIs.
-2. Static model assets should be versioned and integrity-checked in source control.
-3. Avoid dynamic remote model URLs in production builds.
+## 11. Current Non-Goals
 
-## 14. Why This Integration Design
+The current integration contract does not yet require:
 
-This design is used because it provides:
+- intermediate activation extraction,
+- layer-by-layer visualization payloads,
+- dynamic remote model URLs,
+- browser-side retraining.
 
-1. deterministic local inference behavior,
-2. strong compatibility guarantees between preprocess and model input,
-3. explicit support for explainability through intermediate activations,
-4. operational simplicity for static deployment environments.
+Those are future capabilities, not part of the implemented model integration today.
 
+## 12. Acceptance Checklist
+
+The current model integration is valid when:
+
+1. `loadModel()` succeeds from `/model/model.json`,
+2. warmup runs without leaking obvious tensors,
+3. valid `28x28` input returns `10` confidences,
+4. prediction results render correctly in the UI,
+5. regenerated artifacts from the training flow still load in the browser.

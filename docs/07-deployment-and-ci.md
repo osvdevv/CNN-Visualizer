@@ -2,28 +2,51 @@
 
 ## 1. Objective
 
-This document defines how CNN Visualizer V1 is built, validated, and deployed as a static web application using Vite, GitHub Actions, and GitHub Pages.
+This document describes:
 
-## 2. Deployment Strategy
+1. the current static build behavior of the repo,
+2. the deployment target we are actually moving toward next,
+3. the CI/CD contract expected for Cloudflare Pages.
 
-Deployment model:
+## 2. Current State
 
-1. Build static assets from source with Vite.
-2. Publish generated artifacts to GitHub Pages.
-3. Automate with CI on the default branch.
+Today, the repository supports local production builds through Vite:
 
-This aligns with the project requirement of zero backend runtime.
+```bash
+npm ci
+npm run build
+```
 
-## 3. Environment Assumptions
+Current facts:
 
-- Source repository hosted on GitHub.
-- Default branch: `main` (or project equivalent).
-- Node.js LTS available in CI.
-- `npm ci` used for deterministic dependency installs.
+- the build outputs static assets to `dist/`,
+- Vite copies `public/model/*` into `dist/model/*`,
+- the runtime loads the model from `/model/model.json`,
+- there is not yet a committed GitHub Actions deploy workflow for production.
 
-## 4. Build Specification
+## 3. Deployment Target
 
-Build command contract:
+The intended deployment target is:
+
+- Cloudflare Pages
+- deployed through GitHub Actions
+- using Wrangler direct upload from CI
+
+This replaces the older GitHub Pages plan and matches the current task plan for Phase 3.
+
+## 4. Why Cloudflare Pages Fits The Current App
+
+The current app expects a root-served model path:
+
+```ts
+/model/model.json
+```
+
+That makes Cloudflare Pages a better fit for the current setup than a repository-subpath deployment model, because it avoids introducing extra base-path complexity into the browser model URL.
+
+## 5. Build Contract
+
+The CI build step must run:
 
 ```bash
 npm ci
@@ -32,37 +55,52 @@ npm run build
 
 Expected output:
 
-- Vite build artifacts in `dist/`.
+- `dist/index.html`
+- compiled frontend assets under `dist/assets/`
+- copied model assets under `dist/model/`
 
-Static asset requirements:
+Required validation:
 
-- Model files under `public/model/` must be copied to `dist/model/`.
-- Paths must resolve correctly under GitHub Pages base URL.
+1. `dist/` exists after build,
+2. `dist/model/model.json` exists,
+3. `dist/model/group1-shard1of1.bin` exists.
 
-## 5. Vite Configuration Requirements
+## 6. Planned GitHub Actions Workflow
 
-For repository pages deployment (e.g., `/repo-name/`), configure:
+The planned workflow should:
 
-- `base: '/<repo-name>/'` in production mode.
+1. trigger on push to `main`,
+2. optionally support `workflow_dispatch`,
+3. check out the repository,
+4. set up Node.js,
+5. run `npm ci`,
+6. run `npm run build`,
+7. deploy `dist/` to Cloudflare Pages with Wrangler.
 
-For user/org root pages, base may remain `/`.
+## 7. Required GitHub Configuration
 
-Validation rule:
+### Secrets
 
-1. App routes and model asset URLs must resolve correctly after deployment.
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
 
-## 6. CI Pipeline Stages
+### Repository Variable
 
-Recommended workflow stages:
+- `CLOUDFLARE_PROJECT_NAME`
 
-1. Checkout source.
-2. Setup Node.js and cache npm dependencies.
-3. Install dependencies (`npm ci`).
-4. Run lint/tests (if configured).
-5. Build production bundle (`npm run build`).
-6. Upload artifact and deploy to GitHub Pages.
+## 8. Planned Cloudflare Deployment Command
 
-## 7. Reference GitHub Actions Workflow
+The intended deploy command is:
+
+```text
+pages deploy dist --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME }}
+```
+
+Expected GitHub Action integration:
+
+- `cloudflare/wrangler-action@v3`
+
+## 9. Reference Workflow Shape
 
 ```yaml
 name: Deploy CNN Visualizer
@@ -74,15 +112,10 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
+  deployments: write
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -92,81 +125,45 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      - uses: cloudflare/wrangler-action@v3
         with:
-          path: dist
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME }}
 ```
 
-## 8. Branch and Release Policy
+## 10. Production Validation Checklist
 
-Recommended flow:
+After deploy:
 
-1. Feature branches for implementation.
-2. Pull request into default branch with checks passing.
-3. Merge triggers production deployment.
+1. the site opens without a blank screen,
+2. `/model/model.json` resolves,
+3. the model shard resolves,
+4. draw -> preprocess -> predict works,
+5. the deployed app behaves like the local `npm run build` result.
 
-Optional hardening:
+## 11. Rollback / Recovery
 
-- require status checks before merge,
-- protect default branch,
-- require one reviewer approval.
+If deployment fails:
 
-## 9. Deployment Validation Checklist
+1. inspect the GitHub Actions run,
+2. verify Cloudflare credentials and project name,
+3. confirm the `dist/model` files were generated,
+4. rerun the workflow or redeploy the last known good commit.
 
-After each production deploy:
+## 12. Common Failure Modes
 
-1. App loads without blank-screen/runtime crash.
-2. Model file fetch from `/model/model.json` succeeds.
-3. Drawing -> inference -> output loop works.
-4. Layer visualization and controls function.
-5. Mobile viewport remains usable.
+- Missing or invalid Cloudflare secrets.
+- Wrong Pages project name.
+- `dist/model` missing the committed TF.js artifacts.
+- Hosting path drift that breaks `/model/model.json`.
+- Build passing locally but failing in CI because of lockfile drift.
 
-## 10. Rollback Strategy
+## 13. Acceptance Criteria For Phase 3
 
-If production deployment fails:
+Phase 3 deployment work is complete when:
 
-1. Revert offending commit on default branch.
-2. Trigger redeploy from last known good commit.
-3. Confirm model asset integrity and base-path correctness.
-
-## 11. Common Failure Modes
-
-- Wrong Vite `base` path causing broken assets.
-- Missing model files in `public/model/`.
-- CI using incompatible Node.js version.
-- Build passes locally but fails in CI due to lockfile drift.
-
-Mitigation:
-
-1. Keep lockfile committed and current.
-2. Validate production-like build locally before merge.
-3. Add CI smoke test for model asset fetch and app bootstrap.
-
-## 12. Operational KPIs
-
-Track basic delivery health:
-
-1. Build success rate.
-2. Deployment duration.
-3. Mean time to recover from failed deploy.
-4. Number of rollback events per release window.
-
-## 13. Why This Deployment Design
-
-This deployment design is selected because it is:
-
-1. infrastructure-light (static hosting only),
-2. cost-efficient for educational applications,
-3. reproducible through CI automation,
-4. fully aligned with a browser-only inference architecture.
-
+1. the workflow exists in `.github/workflows/`,
+2. a push to `main` deploys successfully,
+3. Cloudflare serves the app and model assets correctly,
+4. the workflow can be rerun safely without manual local deploys.

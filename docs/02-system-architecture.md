@@ -2,199 +2,184 @@
 
 ## 1. Architecture Objective
 
-The system architecture is designed to make CNN inference transparent, interactive, and reproducible in a fully client-side environment.
+The current architecture is designed around two concrete concerns:
 
-The architecture must satisfy four constraints:
+1. run digit inference entirely in the browser,
+2. maintain a separate local training pipeline that can regenerate the browser model artifacts safely.
 
-1. Run entirely in the browser with no backend runtime.
-2. Keep rendering and ML responsibilities decoupled.
-3. Support step-by-step visualization synchronized with model execution.
-4. Remain modular enough to evolve from educational prototype to production-ready static app.
+This keeps the runtime simple while still allowing the model to evolve.
 
-## 2. Architecture Style
+## 2. Architecture Boundaries
 
-CNN Visualizer uses a **modular client-side architecture** with a **single runtime boundary** (the browser).
+CNN Visualizer currently has three practical boundaries:
 
-This is a layered decomposition:
+- Browser runtime:
+  - drawing,
+  - preprocessing,
+  - TensorFlow.js inference,
+  - prediction UI.
+- Static model assets:
+  - `public/model/model.json`,
+  - `public/model/group1-shard1of1.bin`.
+- Local training workspace:
+  - JS experiments in `training/`,
+  - Python/Keras training in `training/python/`,
+  - export back into `public/model/`.
 
-- Input layer: user drawing and pixel normalization.
-- ML layer: TensorFlow.js model loading, inference, and intermediate activations.
-- Visualization layer: 2D/3D rendering and animation orchestration.
-- UI layer: user controls, step panel, and prediction output.
-- Orchestration layer: shared state and processing lifecycle coordination.
-
-The implementation is framework-light (Vanilla TypeScript + Vite) to preserve performance and control over render timing.
+Cloudflare deployment is the next delivery boundary, but it is not implemented yet in the repo.
 
 ## 3. High-Level Architecture Diagram
 
 ```mermaid
 flowchart LR
-    U["User (Mouse/Touch)"] --> C["DrawCanvas (Canvas API)"]
-    C --> P["Preprocessing Pipeline<br/>Downsample + Normalize 28x28"]
-    P --> M["TF.js Inference Engine<br/>MNIST model.json + weights"]
+    U["User"] --> C["DrawCanvas"]
+    C --> P["Preprocess 280x280 -> 28x28"]
+    P --> G["PixelGrid Preview"]
+    P --> M["TensorFlow.js Model"]
+    M --> R["PredictionPanel"]
 
-    M --> A["Intermediate Activations"]
-    M --> O["Output Probabilities (0-9)"]
-
-    A --> V1["LayerRenderer (Three.js)"]
-    A --> V2["FeatureMap Builder"]
-    A --> V3["Kernel Animation (GSAP)"]
-
-    V1 --> R["Visualization Scene"]
-    V2 --> R
-    V3 --> R
-
-    O --> UI1["OutputBar UI"]
-    A --> UI2["StepPanel UI"]
-
-    S["App State + Timeline Orchestrator"] --> C
-    S --> M
-    S --> V1
-    S --> V2
-    S --> V3
-    S --> UI1
-    S --> UI2
+    T["training/python/train_cnn.py"] --> W["cnn-weights.json + training-summary.json"]
+    W --> E["training/export-python-model.js"]
+    E --> A["public/model/*"]
+    A --> M
 ```
 
-## 4. Module Map (Code-Level Ownership)
+## 4. Browser Module Map
 
-Expected project structure and responsibility boundaries:
+Current browser runtime modules:
 
 - `src/main.ts`
-  - bootstrap sequence,
-  - dependency wiring,
-  - global lifecycle startup.
+  - bootstraps the app,
+  - wires drawing, preprocessing, prediction, and UI state.
 - `src/canvas/DrawCanvas.ts`
-  - pointer events,
-  - drawing buffer,
-  - canvas reset and capture.
+  - pointer input,
+  - freehand drawing,
+  - clear/export behavior.
+- `src/canvas/preprocess.ts`
+  - grayscale conversion,
+  - light dilation,
+  - bounding-box extraction,
+  - centering and resize to `28x28`.
 - `src/canvas/PixelGrid.ts`
-  - 28x28 input visualization.
+  - visual preview of the processed input matrix.
 - `src/nn/model.ts`
-  - model loading with `tf.loadLayersModel`,
-  - inference execution,
-  - activation extraction model (`tf.model` with layer outputs).
-- `src/nn/layers.ts`
-  - layer metadata for rendering and explanations.
-- `src/viz/LayerRenderer.ts`
-  - 3D layer geometry and activation coloring.
-- `src/viz/KernelAnim.ts`
-  - convolution kernel traversal animation.
-- `src/viz/FeatureMap.ts`
-  - progressive feature-map generation logic.
-- `src/ui/StepPanel.ts`
-  - stage explanation and progression controls.
-- `src/ui/OutputBar.ts`
-  - confidence bars and winning class emphasis.
-- `src/shaders/activation.vert`
-  - vertex behavior for activation effects.
-- `src/shaders/activation.frag`
-  - activation value to color/glow mapping.
+  - model loading,
+  - model promise caching,
+  - warmup.
+- `src/nn/predict.ts`
+  - tensor construction,
+  - prediction execution,
+  - confidence ranking.
+- `src/ui/PredictionPanel.ts`
+  - top-class UI,
+  - confidence bar rendering,
+  - reset behavior.
 
-## 5. Runtime Sequence (Inference + Visualization)
+## 5. Training and Export Module Map
+
+Current training/export modules:
+
+- `training/train-baseline.js`
+  - linear baseline experiment.
+- `training/train-cnn.js`
+  - JS-based CNN experiment path.
+- `training/model-factory.js`
+  - shared model definitions.
+- `training/tfjs-export.js`
+  - writes TF.js `model.json` and shard binaries.
+- `training/export-python-model.js`
+  - rebuilds browser artifacts from Python-exported weights.
+- `training/python/train_cnn.py`
+  - main Keras training script for `cnn-visualizer-cnn-v2`.
+- `training/python/artifacts/training-summary.json`
+  - stores training metrics and confusion data.
+- `training/python/artifacts/cnn-weights.json`
+  - serialized weights for TF.js export.
+
+## 6. Runtime Sequence
 
 ```mermaid
 sequenceDiagram
     participant User
     participant Canvas as DrawCanvas
-    participant Prep as Preprocess
-    participant NN as TF.js Model
-    participant Orchestrator as Timeline/State
-    participant Viz as Three.js/GSAP
-    participant UI as StepPanel/OutputBar
+    participant Prep as preprocess.ts
+    participant Preview as PixelGrid
+    participant Model as src/nn/model.ts
+    participant Predict as src/nn/predict.ts
+    participant UI as PredictionPanel
 
     User->>Canvas: Draw digit
-    Canvas->>Prep: Export pixel buffer
-    Prep->>NN: Build input tensor [1,28,28,1]
-    NN->>NN: Run inference
-    NN-->>Orchestrator: Final probabilities
-    NN-->>Orchestrator: Intermediate activations
-    Orchestrator->>Viz: Trigger layer-by-layer animations
-    Orchestrator->>UI: Update stage text and confidence bars
-    User->>Orchestrator: Step / Auto / Speed commands
-    Orchestrator->>Viz: Adjust timeline playback
+    User->>Model: Trigger predict flow
+    Canvas->>Prep: export ImageData
+    Prep->>Preview: update 28x28 preview
+    Prep->>Predict: provide normalized matrix
+    Model->>Predict: provide loaded LayersModel
+    Predict->>UI: top class + confidences
 ```
 
-## 6. Why This Architecture
+## 7. Training / Export Sequence
 
-### 6.1 Full Browser Execution
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant Py as train_cnn.py
+    participant Art as artifacts/
+    participant Export as export-python-model.js
+    participant Public as public/model
+    participant App as Browser App
 
-The project goal explicitly requires no backend dependency. Running all inference and visualization in-browser guarantees:
+    Dev->>Py: Run Python training
+    Py->>Art: Save weights + summary
+    Dev->>Export: Regenerate TF.js artifacts
+    Export->>Public: Write model.json + shard
+    App->>Public: Load updated model at runtime
+```
 
-- zero network round-trip for prediction loops,
-- deterministic local demos in classrooms/workshops,
-- simple deployment as static assets.
+## 8. Design Decisions
 
-### 6.2 Separation of Concerns
+### 8.1 Browser-Only Inference
 
-Visualization and ML processing are independent concerns with different change rates:
+Inference stays in the browser to keep:
 
-- ML logic evolves around model APIs and tensor transformations.
-- Visualization evolves around rendering style, animation, and UX.
+- demos simple,
+- asset delivery static,
+- prediction latency local,
+- deployment backend-free.
 
-Decoupling these layers prevents rendering changes from breaking inference logic and vice versa.
+### 8.2 Separate Training Workspace
 
-### 6.3 Synchronized Educational Flow
+Training is intentionally not part of the frontend runtime.
 
-The app is an explanatory tool, not only a classifier. The orchestrator-centric runtime allows:
+This separation keeps:
 
-- deterministic step-by-step progression,
-- replayable transitions,
-- strict synchronization between layer activation, kernel movement, and textual explanation.
+- the browser bundle small,
+- the frontend code focused,
+- model iteration faster,
+- retraining workflows reproducible.
 
-### 6.4 Performance and Control
+### 8.3 Static Artifact Contract
 
-Using Vanilla TypeScript with Vite (instead of a heavy UI framework) reduces runtime overhead and gives direct control of:
+The browser does not know how the model was trained. It only depends on a stable artifact contract under `public/model/`.
 
-- animation frame scheduling,
-- memory lifecycle for tensors and GPU resources,
-- render timing coordination between Canvas, Three.js, and GSAP.
+That allows the training implementation to evolve without rewriting the UI every time.
 
-### 6.5 Deployment Simplicity
+## 9. Architectural Risks and Mitigations
 
-A static, client-only architecture maps directly to GitHub Pages + GitHub Actions:
+- Risk: browser preprocess drifts away from training assumptions.
+  - Mitigation: keep preprocessing docs and training/export summaries aligned.
+- Risk: exported weights do not match the browser topology.
+  - Mitigation: regenerate artifacts through the shared export scripts.
+- Risk: static hosting path breaks `/model/model.json`.
+  - Mitigation: keep hosting aligned with root-served static paths; validate `dist/model`.
+- Risk: deployment docs drift from the actual hosting target.
+  - Mitigation: keep deployment docs focused on Cloudflare Pages only.
 
-- no server provisioning,
-- low operational cost,
-- straightforward CI/CD path.
+## 10. Current Architecture Summary
 
-## 7. Data Contracts Between Layers
+The current system is best described as:
 
-Minimum interface contracts to keep modules decoupled:
+1. a browser inference app,
+2. backed by static TF.js model assets,
+3. fed by a separate local training/export pipeline.
 
-- `DrawCanvas -> Preprocess`
-  - Input: raw pixel RGBA buffer.
-  - Output: normalized grayscale matrix `number[28][28]`.
-- `Preprocess -> NN`
-  - Input: normalized matrix.
-  - Output: tensor shaped `[1, 28, 28, 1]`.
-- `NN -> Visualization`
-  - Input: per-layer activation tensors converted to typed arrays.
-  - Output: render payload with layer id, dimensions, values, and normalized ranges.
-- `NN -> UI`
-  - Input: probability vector length 10.
-  - Output: ranked classes and confidence percentages.
-- `UI Controls -> Orchestrator`
-  - Commands: `step`, `play`, `pause`, `setSpeed`, `reset`.
-
-## 8. Architectural Risks and Mitigations
-
-- Risk: browser memory growth from repeated tensor allocations.
-  - Mitigation: enforce `tf.tidy()` boundaries and explicit tensor disposal.
-- Risk: animation desynchronization across modules.
-  - Mitigation: single timeline authority in orchestrator.
-- Risk: low-end device performance drops.
-  - Mitigation: adaptive quality settings and capped frame complexity.
-- Risk: model asset path issues in static deployment.
-  - Mitigation: deterministic asset paths under `public/model/` and CI validation.
-
-## 9. Architecture Decision Summary
-
-This architecture is used because it is the best fit for the product’s educational mission:
-
-1. It makes CNN internals observable in real time.
-2. It preserves clear technical boundaries for maintainability.
-3. It supports deterministic, synchronized visual storytelling.
-4. It deploys as a low-friction static web application.
-
-The result is a technically robust system that remains simple to run, reason about, and extend.
+That is the architecture the repo implements today. Advanced visualization and deployment automation remain follow-on phases, not current runtime modules.
