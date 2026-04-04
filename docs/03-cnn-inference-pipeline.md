@@ -1,256 +1,178 @@
-# CNN Visualizer - CNN Inference Pipeline
+# CNN Visualizer - Current Inference Pipeline
 
 ## 1. Pipeline Objective
 
-This document defines the end-to-end inference pipeline for CNN Visualizer V1: from user-drawn pixels to final digit prediction and intermediate activations used by the visualization engine.
+This document defines the inference pipeline that is implemented today in the browser runtime.
 
-The pipeline must be:
+Its job is to turn a freehand drawing into:
 
-1. Deterministic for identical input.
-2. Fully client-side (TensorFlow.js in browser).
-3. Synchronized with UI/animation playback.
-4. Memory-safe under repeated inference cycles.
+- a normalized `28x28` input matrix,
+- a TensorFlow.js model prediction,
+- a ranked confidence output for digits `0-9`.
 
 ## 2. Pipeline Overview
 
 ```mermaid
 flowchart LR
-    A["User Draws Digit (Canvas 280x280)"] --> B["Capture Pixel Buffer (RGBA)"]
-    B --> C["Preprocess: Center, Downsample to 28x28, Normalize"]
-    C --> D["Build Input Tensor [1,28,28,1]"]
-    D --> E["Run TF.js CNN Inference"]
-    E --> F["Extract Layer Activations"]
-    E --> G["Compute Class Probabilities (0-9)"]
-    F --> H["Visualization Payload"]
-    G --> I["OutputBar Payload"]
-    H --> J["Layer/Kernel Animation Timeline"]
-    I --> K["Top Class + Confidence UI"]
+    A["User draws on 280x280 canvas"] --> B["Export ImageData"]
+    B --> C["toGrayscale + invert"]
+    C --> D["light dilation"]
+    D --> E["bounding box with threshold"]
+    E --> F["center + resize to 28x28"]
+    F --> G["PixelGrid preview"]
+    F --> H["Build tensor [1,28,28,1]"]
+    H --> I["TF.js model.predict"]
+    I --> J["Probability vector"]
+    J --> K["Top class + confidence bars"]
 ```
 
 ## 3. Input Contract
 
 ### Source
 
-- Interactive drawing canvas at `280x280` pixels.
-- Black background with white brush stroke (or equivalent high-contrast scheme).
+- Drawing canvas size: `280x280`
+- Brush color: black stroke on a white/transparent background
+- Capture format: browser `ImageData`
 
-### Raw Capture Format
+### Preprocess Output
 
-- Browser `ImageData` RGBA array from canvas context.
-- Expected shape before transform: `Uint8ClampedArray(280 * 280 * 4)`.
+- Type: `number[28][28]`
+- Range: `[0, 1]`
+- Convention:
+  - `0` is background-like,
+  - `1` is strong ink.
 
-### Preprocess Output Format
+## 4. Current Preprocessing Steps
 
-- Normalized grayscale matrix: `number[28][28]`.
-- Value domain: `[0.0, 1.0]` where higher values represent stronger stroke intensity.
+The implemented preprocessing flow in `src/canvas/preprocess.ts` is:
 
-## 4. Preprocessing Specification
+1. Read RGBA pixels from the canvas.
+2. Composite transparent pixels onto white.
+3. Convert to grayscale intensity.
+4. Invert intensity so darker stroke becomes larger signal.
+5. Apply light dilation to reconnect thin or slightly broken strokes.
+6. Detect the ink bounding box using an explicit threshold.
+7. Place the detected content in a square workspace.
+8. Resize to an inner `20x20` region.
+9. Center that region inside the final `28x28` matrix.
+10. Clamp values to `[0,1]`.
 
-Preprocessing converts freehand drawing into a model-compatible MNIST-like input.
+### Important Constants
 
-### Required Steps
+- Output size: `28x28`
+- Inner content size: `20x20`
+- Ink threshold: `0.2`
 
-1. Read canvas RGBA pixels.
-2. Convert each pixel to grayscale intensity.
-3. Detect non-empty digit region (bounding box) to reduce empty margins.
-4. Re-center digit inside a square working region.
-5. Downsample to `28x28`.
-6. Normalize values to `[0,1]`.
-7. Optionally apply threshold/smoothing to reduce noise.
+### Current Empty-Canvas Behavior
 
-### Reference Pseudocode
+If no ink is detected, preprocessing returns an all-zero `28x28` matrix.
 
-```ts
-function preprocessCanvasTo28x28(imageData: ImageData): number[][] {
-  const gray = toGrayscale(imageData);              // 280x280
-  const bbox = findInkBoundingBox(gray);            // min/max x,y
-  const cropped = crop(gray, bbox);
-  const centered = centerInSquare(cropped, 280);    // preserve aspect ratio
-  const downsampled = resizeBilinear(centered, 28, 28);
-  const normalized = normalize01(downsampled);
-  return normalized;
-}
-```
+The current app does not yet expose a dedicated "no input" UX state; it will still allow prediction against that zero matrix.
 
-### Quality Rules
-
-- The same drawing must always produce the same `28x28` matrix.
-- Empty canvas should not trigger undefined behavior.
-- Preprocess must complete within interactive latency on common browsers.
-
-## 5. Tensor Construction
-
-Model input tensor must be NHWC:
-
-- Shape: `[1, 28, 28, 1]`
-- Type: `float32`
-- Source: normalized matrix
+## 5. Reference Pipeline Shape
 
 ```ts
-const inputTensor = tf.tensor(normalizedMatrix, [28, 28], 'float32')
-  .expandDims(0)  // batch
-  .expandDims(-1); // channel
+const imageData = drawCanvas.exportImageData();
+const matrix28 = preprocessTo28x28(imageData);
+pixelGrid.update(matrix28);
+const result = await predictDigit(model, matrix28);
 ```
 
-If the model expects inverted intensity convention, apply `1 - x` consistently during preprocess.
+## 6. Tensor Construction
 
-## 6. Model Execution
+The current prediction path flattens the `28x28` matrix into a `Float32Array` and builds:
 
-### Base Model
+- shape: `[1, 28, 28, 1]`
+- dtype: `float32`
 
-- Loaded from static assets under `public/model/` using:
-  - `model.json`
-  - weight shard files (`.bin`)
+Reference pattern:
 
 ```ts
-const model = await tf.loadLayersModel('/model/model.json');
+const input = tf.tensor4d(flatInput, [1, 28, 28, 1], 'float32');
 ```
 
-### Inference Call
+## 7. Model Execution
 
-- Main output: class logits or probabilities for digits `0-9`.
-- Post-process with `softmax` if model output is logits.
+### Load Path
+
+The model is loaded from:
 
 ```ts
-const logitsOrProbs = model.predict(inputTensor) as tf.Tensor;
-const probs = needsSoftmax ? tf.softmax(logitsOrProbs) : logitsOrProbs;
+tf.loadLayersModel('/model/model.json')
 ```
 
-## 7. Intermediate Activation Extraction
+### Runtime Behavior
 
-To explain CNN behavior, create an intermediate model exposing each layer output:
+- The model promise is cached after the first successful load.
+- A warmup pass with `tf.zeros([1, 28, 28, 1])` runs after loading.
+- Prediction is executed on the loaded `LayersModel`.
 
-```ts
-const intermediateModel = tf.model({
-  inputs: model.inputs,
-  outputs: model.layers.map((l) => l.output),
-});
-```
+### Probability Handling
 
-At runtime:
+The exported model currently ends with `softmax`, so output is expected to already be probabilities.
 
-1. Run `intermediateModel.predict(inputTensor)`.
-2. Collect one tensor per layer.
-3. Convert tensors to typed arrays/JSON-safe payloads for rendering.
-4. Attach layer metadata (`name`, `type`, `shape`, `index`).
+Even so, the prediction code checks whether the output looks like a probability vector and applies `tf.softmax()` only if necessary.
 
-### Expected Layer Progression (MNIST CNN Typical)
+## 8. Output Contract
 
-1. Input `28x28x1`
-2. Conv2D #1 activation maps
-3. MaxPooling downsampled maps
-4. Conv2D #2 activation maps
-5. Flatten vector
-6. Dense hidden representation
-7. Output vector length `10`
-
-## 8. Visualization Payload Contract
-
-Each visualization frame should receive a stable payload object:
-
-```ts
-type LayerActivationPayload = {
-  layerIndex: number;
-  layerName: string;
-  layerType: string;
-  shape: number[];
-  values: Float32Array;
-  min: number;
-  max: number;
-  normalizedValues: Float32Array;
-};
-```
-
-Design rule:
-
-- Normalization for color mapping must be per-layer and reproducible.
-- The same activation tensor must always map to the same visual intensity scale.
-
-## 9. Output Post-Processing
-
-From final probabilities:
-
-1. Compute confidence percentage for each class `0-9`.
-2. Rank classes descending.
-3. Select top-1 prediction.
-4. Send result to `OutputBar` and winner-highlight UI.
+Current output shape for the UI:
 
 ```ts
 type PredictionResult = {
-  probabilities: number[];  // length 10
-  topClass: number;         // 0..9
-  topConfidence: number;    // 0..1
-  ranked: Array<{ digit: number; confidence: number }>;
+  confidences: number[];
+  topClass: number;
+  topConfidence: number;
+  ranking: Array<{ digit: number; confidence: number }>;
 };
 ```
 
-## 10. Pipeline Control Modes
+Rules:
 
-The pipeline supports two pedagogical modes:
+- `confidences.length` must be `10`
+- `topClass` is the highest-confidence digit
+- `ranking` is sorted descending by confidence
 
-- `step`: Execute and reveal stages one by one on user command.
-- `auto`: Play full pipeline timeline continuously with configurable speed.
+## 9. Memory and Performance Rules
 
-Control API (or equivalent):
+Current runtime safeguards:
 
-- `step()`
-- `play()`
-- `pause()`
-- `setSpeed(multiplier: number)`
-- `reset()`
+1. Temporary tensors are wrapped in `tf.tidy()` during prediction.
+2. Warmup tensors are disposed immediately after model load.
+3. The final output tensor is disposed after its values are copied to JS.
+4. The model itself is loaded once and reused.
 
-## 11. Memory and Performance Requirements
+## 10. Alignment With Training
 
-TensorFlow.js object lifecycle must be explicitly controlled.
+The browser pipeline must stay aligned with the artifact generation flow from:
 
-### Rules
+- `training/train-cnn.js`
+- `training/python/train_cnn.py`
+- `training/export-python-model.js`
 
-1. Wrap temporary computations with `tf.tidy()`.
-2. Dispose tensors not needed after payload extraction.
-3. Keep only compact serializable activation data for visualization.
-4. Avoid creating new models inside repeated prediction loops.
+The most important compatibility points are:
 
-### Example Pattern
+1. intensity convention,
+2. spatial shape `28x28x1`,
+3. centered digit placement,
+4. resilience to stroke thickness and small gaps.
 
-```ts
-const result = tf.tidy(() => {
-  const input = buildInputTensor(matrix);
-  const outputs = intermediateModel.predict(input) as tf.Tensor | tf.Tensor[];
-  const probs = model.predict(input) as tf.Tensor;
-  return materializeOutputs(outputs, probs); // copy to JS arrays
-});
-```
+## 11. Current Limitations
 
-## 12. Failure Modes and Handling
+The current browser pipeline does not yet include:
 
-- Empty canvas:
-  - Return "no input" state and skip inference.
-- Model asset missing/corrupted:
-  - Surface a recoverable UI error with retry action.
-- Shape mismatch:
-  - Abort inference and log structured diagnostics.
-- Low-performance device:
-  - Degrade animation fidelity, keep inference correctness.
+- intermediate activation extraction for the UI,
+- layer-by-layer visualization payloads,
+- a dedicated no-input state,
+- automated browser-side validation of model asset integrity.
 
-## 13. Validation Checklist
+Those belong to future phases, not the current runtime contract.
 
-The pipeline is accepted when all checks pass:
+## 12. Acceptance Checklist
 
-1. `28x28` matrix generation is stable for repeated identical inputs.
-2. Model loads successfully from static path in dev and production builds.
-3. Inference returns 10-class output consistently.
-4. Intermediate layer outputs are available and correctly mapped to metadata.
-5. Visualization renders all expected stages in correct order.
-6. Step/auto controls remain synchronized with inference timeline.
-7. No unbounded tensor memory growth during repeated draws.
+The current inference pipeline is behaving correctly when:
 
-## 14. Why This Pipeline Design
-
-This design is used because it balances technical correctness with explainability:
-
-1. It keeps a strict data contract between canvas, ML, and rendering systems.
-2. It exposes intermediate CNN states needed for educational visualization.
-3. It preserves deterministic behavior for debugging and demos.
-4. It remains efficient enough for real-time browser interaction.
-
-The pipeline therefore supports both learning outcomes (interpretability) and engineering outcomes (reliable runtime behavior).
+1. repeated identical input produces the same `28x28` matrix,
+2. the model loads from `/model/model.json`,
+3. a valid prediction returns `10` class confidences,
+4. the top-class UI updates after each predict action,
+5. repeated draw/predict/clear cycles do not visibly degrade the app.

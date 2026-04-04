@@ -2,194 +2,159 @@
 
 ## 1. Purpose
 
-This document defines the quality strategy and release acceptance criteria for CNN Visualizer V1.
+This document defines the quality strategy for the repository as it exists today:
 
-It establishes what must be validated before considering the product production-ready.
+- a working browser inference baseline,
+- an improved model and training/export pipeline,
+- an upcoming Cloudflare deployment milestone.
 
-## 2. Test Strategy Overview
+## 2. Current Testing Reality
 
-Testing is organized into four layers:
+The current repo relies mainly on:
 
-1. Unit tests for deterministic logic (preprocess, mapping, formatting).
-2. Integration tests for module boundaries (canvas -> model -> visualization payload).
-3. End-to-end tests for user workflows.
-4. Manual exploratory checks for UX and visual quality.
+- manual validation,
+- build verification,
+- inspection of generated training artifacts.
+
+There is not yet a committed automated test suite or lint pipeline in the root project scripts, so the acceptance criteria below are written to match the actual stage of the codebase.
 
 ## 3. Scope Under Test
 
-### Functional Scope
+### Current Implemented Scope
 
-- Drawing input and reset behavior.
-- Preprocessing pipeline (`280x280` -> `28x28`).
-- Model loading and inference execution.
-- Intermediate activation extraction.
-- Layer visualization and kernel animation.
-- Step/auto playback controls.
-- Output confidence bars and winner highlight.
-- Responsive behavior on mobile/desktop.
+- drawing input and reset behavior
+- preprocessing pipeline (`280x280` -> `28x28`)
+- model loading and warmup
+- browser prediction flow
+- top-class and confidence-bar rendering
+- training artifact generation
+- TF.js artifact regeneration
 
-### Non-Functional Scope
+### Upcoming Scope
 
-- Runtime stability across repeated runs.
-- Memory safety in tensor lifecycle.
-- Interactivity and perceived smoothness.
-- Deployment correctness in production environment.
+- Cloudflare Pages deployment through GitHub Actions
 
-## 4. Unit Test Requirements
+### Future Scope
 
-Minimum unit coverage areas:
+- advanced visualization modules
+- intermediate activation UI
+- playback controls
 
-1. Grayscale conversion and normalization math.
-2. Bounding-box and centering logic.
-3. Tensor shape builder for `[1,28,28,1]`.
-4. Probability ranking and top-class selection.
-5. Activation normalization for color mapping.
+## 4. Manual Runtime Checks
 
-Expected characteristics:
+Minimum checks for the current browser app:
 
-- deterministic outputs for fixed inputs,
-- clear edge-case handling (empty canvas, invalid values),
-- no hidden side effects.
+1. Open the app.
+2. Confirm the model reaches the ready state.
+3. Draw a clear `0`, `1`, `7`, `8`, and `9`.
+4. Click `Predict` for each case.
+5. Confirm:
+   - the preview grid updates,
+   - the top class updates,
+   - the confidence bars update.
+6. Click `Clear`.
+7. Confirm canvas, preview, and prediction state reset.
 
-## 5. Integration Test Requirements
+## 5. Preprocessing Validation
 
-Critical integration paths:
+The current preprocessing pipeline should be checked for:
 
-1. `DrawCanvas -> preprocess -> tensor builder`.
-2. `tensor input -> model.predict -> probability vector`.
-3. `intermediateModel.predict -> activation payload builder`.
-4. `orchestrator -> step panel + visualization + output bar synchronization`.
+1. deterministic output for repeated identical input,
+2. resilience to thin strokes,
+3. resilience to small gaps in a stroke,
+4. sensible centering inside the `28x28` result,
+5. non-crashing behavior for an empty canvas.
 
-Pass condition:
+Current note:
 
-- all connected modules exchange data in expected formats with stable ordering.
+- empty canvas currently becomes an all-zero matrix rather than a special no-input state.
 
-## 6. End-to-End Test Scenarios
+## 6. Model Integration Validation
 
-### Scenario 1 - Basic Prediction Loop
+The current model integration passes when:
 
-1. Open app.
-2. Draw a clear digit.
-3. Observe confidence bars and top class.
-4. Clear and redraw.
+1. `loadModel()` succeeds from `/model/model.json`,
+2. warmup finishes without user-visible errors,
+3. prediction returns exactly `10` confidences,
+4. the top class matches the highest-confidence output,
+5. repeated predictions do not visibly degrade the app.
 
-Expected result:
+## 7. Training Pipeline Validation
 
-- no crash, output updates correctly after each draw.
+The model-improvement phase passes when:
 
-### Scenario 2 - Step-by-Step Explanation
+1. `training/python/train_cnn.py` runs from the documented `uv` workflow,
+2. `training/python/artifacts/training-summary.json` is generated,
+3. `training/python/artifacts/cnn-weights.json` is generated,
+4. `training/export-python-model.js` regenerates `public/model/*`,
+5. the regenerated browser artifacts still load in the frontend.
 
-1. Draw digit.
-2. Run `step` repeatedly.
-3. Confirm stage progression order and UI text alignment.
+## 8. Recorded Quality Indicators
 
-Expected result:
+The current committed training summary reports approximately:
 
-- each step advances one logical stage and visualization remains synchronized.
+- best validation accuracy: `0.9905`
+- test accuracy: `0.9910`
 
-### Scenario 3 - Auto Playback
+These values are not a substitute for browser validation, but they are part of the acceptance evidence for the Phase 2 model-improvement work.
 
-1. Draw digit.
-2. Run `auto`.
-3. Adjust speed control during playback.
+## 9. Build Validation
 
-Expected result:
+Before any deploy work is considered ready:
 
-- timeline speed changes without desync or broken states.
+1. run `npm ci`
+2. run `npm run build`
+3. confirm `dist/model/model.json` exists
+4. confirm `dist/model/group1-shard1of1.bin` exists
+5. open the local production preview if needed
 
-### Scenario 4 - Mobile Usability
+## 10. Cloudflare Deploy Acceptance
 
-1. Open app on mobile viewport.
-2. Draw digit, run inference, inspect output and stage controls.
+For the upcoming deployment phase, acceptance requires:
 
-Expected result:
+1. GitHub Actions workflow exists,
+2. workflow completes successfully on `main`,
+3. Cloudflare serves the app without 404s for model assets,
+4. draw -> predict works in production,
+5. workflow rerun produces a safe redeploy.
 
-- all key controls usable and content readable without clipping.
+## 11. Recommended Future Automated Coverage
 
-## 7. Acceptance Criteria (Functional)
+When automated tests are added, prioritize:
 
-V1 functional acceptance requires:
+1. grayscale conversion and normalization math,
+2. bounding-box and centering logic,
+3. tensor shape construction,
+4. probability ranking logic,
+5. model asset existence checks in production builds.
 
-1. User can draw with mouse and touch.
-2. Preprocess outputs valid `28x28` normalized matrix.
-3. Model loads from static path and runs in browser.
-4. Final output includes all `10` class confidences.
-5. Intermediate activations are available for visualization.
-6. Kernel animation and feature-map progression execute correctly.
-7. Step and auto modes are both stable.
-8. Reset behavior restores clean state for next run.
+## 12. Defect Severity Policy
 
-## 8. Acceptance Criteria (Non-Functional)
-
-V1 non-functional acceptance requires:
-
-1. No unbounded memory growth across repeated inference cycles.
-2. No blocking/freezing during normal interaction flows.
-3. Rendering remains visually coherent on desktop and mobile.
-4. Production deployment works from default branch via CI.
-5. No P0/P1 defects remain open at release gate.
-
-## 9. Regression Checklist
-
-Run before each release candidate:
-
-1. Model asset path validity in production build.
-2. Baseline prediction loop still operational.
-3. Stage synchronization still correct after animation changes.
-4. Output confidence formatting remains accurate.
-5. Mobile layout still functional.
-
-## 10. Defect Severity Policy
-
-- P0: App unusable, crash, or major data-flow failure.
-- P1: Core feature broken or incorrect inference/visualization behavior.
-- P2: Secondary feature issue with workaround available.
-- P3: Cosmetic or minor UX inconsistencies.
+- P0: app unusable or production deploy broken
+- P1: core prediction flow incorrect or unstable
+- P2: secondary issue with workaround
+- P3: cosmetic or low-impact UX issue
 
 Release rule:
 
-- P0/P1 must be resolved before production release.
+- P0 and P1 must be resolved before production rollout.
 
-## 11. Test Data and Reproducibility
+## 13. Current Release Gates
 
-Use a mixed test set:
+The current repo is ready for the next milestone only when:
 
-1. Hand-drawn digits from multiple users.
-2. Programmatically generated synthetic strokes.
-3. Edge cases:
-  - very thin strokes,
-  - very thick strokes,
-  - off-center digits,
-  - near-empty canvas.
+1. browser baseline checks pass,
+2. model artifacts are valid and load correctly,
+3. training/export flow remains reproducible,
+4. deployment docs and implementation agree on Cloudflare Pages.
 
-Store representative reference inputs and expected output ranges for regression validation.
+## 14. Future Testing Boundary
 
-## 12. CI Quality Gates
+When advanced visualization work begins, a separate acceptance layer should be added for:
 
-Recommended quality gates before deploy job:
+- activation extraction,
+- stage synchronization,
+- visualization correctness,
+- playback controls.
 
-1. Lint passes.
-2. Unit/integration suite passes.
-3. Production build succeeds.
-4. Optional smoke E2E passes on preview build.
-
-## 13. Release Sign-Off Template
-
-A release is approved when:
-
-1. Functional acceptance criteria: pass.
-2. Non-functional acceptance criteria: pass.
-3. Regression checklist: pass.
-4. Open defect review completed.
-5. Product owner/maintainer sign-off recorded.
-
-## 14. Why This Testing Approach
-
-This approach is selected because CNN Visualizer combines ML correctness, rendering synchronization, and interactive UX.
-
-A layered strategy is required to:
-
-1. catch deterministic logic issues early,
-2. validate module contracts before full UI testing,
-3. guarantee end-user workflow reliability before release.
-
+Those checks are intentionally not treated as current baseline acceptance criteria, because those features are not implemented yet.
