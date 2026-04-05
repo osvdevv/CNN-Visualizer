@@ -13,6 +13,10 @@ CNN Visualizer is a client-side educational app that lets users draw a digit (`0
 
 The app is designed to run **100% in the browser** with no backend runtime.
 
+## Live
+You can explore the web:
+https://cnn-visualizer.pages.dev/
+
 ## Tech Stack
 
 - TypeScript (vanilla)
