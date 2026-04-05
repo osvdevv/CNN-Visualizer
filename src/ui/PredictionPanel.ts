@@ -17,7 +17,7 @@ export class PredictionPanel {
     this.topClassEl.textContent = '-';
     this.topConfidenceEl.textContent = '0.00%';
 
-    const emptyRows = Array.from({ length: 10 }, (_, digit) => this.renderRow(digit, 0)).join('');
+    const emptyRows = Array.from({ length: 10 }, (_, digit) => this.renderCard(digit, 0, false)).join('');
     this.listEl.innerHTML = emptyRows;
   }
 
@@ -26,22 +26,26 @@ export class PredictionPanel {
     this.topConfidenceEl.textContent = `${(result.topConfidence * 100).toFixed(2)}%`;
 
     const rows = result.confidences
-      .map((confidence, digit) => this.renderRow(digit, confidence))
+      .map((confidence, digit) => this.renderCard(digit, confidence, digit === result.topClass))
       .join('');
 
     this.listEl.innerHTML = rows;
   }
 
-  private renderRow(digit: number, confidence: number): string {
+  private renderCard(digit: number, confidence: number, isTop: boolean): string {
     const percent = (confidence * 100).toFixed(2);
+    const fill = confidence > 0 ? `${Math.max(confidence * 100, 4)}%` : '0%';
 
     return `
-      <li class="score-row">
-        <span class="score-digit">${digit}</span>
-        <div class="score-bar-track">
-          <div class="score-bar-fill" style="width: ${percent}%;"></div>
+      <li class="score-card${isTop ? ' is-top' : ''}">
+        <div class="score-card-head">
+          <span class="score-digit-badge">${digit}</span>
+          <span class="score-card-value">${percent}%</span>
         </div>
-        <span class="score-value">${percent}%</span>
+        <div class="score-bar-track score-card-track">
+          <div class="score-bar-fill score-card-fill" style="width: ${fill};"></div>
+        </div>
+        <span class="score-card-label">${isTop ? 'Prediccion' : 'Clase'}</span>
       </li>
     `;
   }
